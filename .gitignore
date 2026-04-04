@@ -1,0 +1,37 @@
+# Environment
+.env
+venv/
+env/
+ENV/
+
+# Data files
+data/
+logs/
+*.csv
+*.json
+!config/commodities.json
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Streamlit
+.streamlit/
+
+# Models
+models/*
+```
+

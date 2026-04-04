@@ -1,0 +1,24 @@
+# Core
+pandas
+numpy
+python-dotenv
+
+# Data Collection
+fredapi==0.5.1
+
+# Machine Learning
+scikit-learn==1.3.0
+statsmodels==0.14.0
+xgboost
+pmdarima
+
+# Visualization
+streamlit==1.29.0
+plotly==5.18.0
+
+# Utilities
+joblib==1.3.2
+
+yfinance
+
+pytest

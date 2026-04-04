@@ -1,0 +1,194 @@
+{
+  "metadata": {
+    "last_updated": "2026-03-18",
+    "version": "1.0",
+    "data_source": "FRED API"
+  },
+  "frequency_config": {
+    "daily": {
+      "period": 365,
+      "min_data_points": 730,
+      "forecast_steps": 7,
+      "change_periods": 1,
+      "ma_window": 7
+    },
+    "weekly": {
+      "period": 52,
+      "min_data_points": 104,
+      "forecast_steps": 4,
+      "change_periods": 1,
+      "ma_window": 4
+    },
+    "monthly": {
+      "period": 12,
+      "min_data_points": 36,
+      "forecast_steps": 3,
+      "change_periods": 1,
+      "ma_window": 3
+    },
+    "quarterly": {
+      "period": 4,
+      "min_data_points": 20,
+      "forecast_steps": 2,
+      "change_periods": 1,
+      "ma_window": 4
+    }
+  },
+  "commodities": {
+    "natural_gas": {
+      "id": "DHHNGSP",
+      "name": "Natural Gas Price",
+      "unit": "USD/MMBtu",
+      "category": "energy_input",
+      "frequency": "daily"
+    },
+    "crude_oil": {
+      "id": "DCOILWTICO",
+      "name": "Crude Oil WTI",
+      "unit": "USD/barrel",
+      "category": "energy_input",
+      "frequency": "daily"
+    },
+    "diesel": {
+      "id": "GASDESW",
+      "name": "Diesel Price",
+      "unit": "USD/gallon",
+      "category": "energy_input",
+      "frequency": "weekly"
+    },
+    "gasoline": {
+      "id": "GASREGW",
+      "name": "Gasoline Price",
+      "unit": "USD/gallon",
+      "category": "energy_input",
+      "frequency": "weekly"
+    },
+    "electricity": {
+      "id": "APU000072610",
+      "name": "Electricity Price Index",
+      "unit": "Index",
+      "category": "energy_input",
+      "frequency": "monthly"
+    },
+    "corn": {
+      "id": "PMAIZMTUSDM",
+      "name": "Corn Price Index",
+      "unit": "Index 2010=100",
+      "category": "crop",
+      "frequency": "monthly"
+    },
+    "wheat": {
+      "id": "PWHEAMTUSDM",
+      "name": "Wheat Price Index",
+      "unit": "Index 2010=100",
+      "category": "crop",
+      "frequency": "monthly"
+    },
+    "soybeans": {
+      "id": "PSOYBUSDM",
+      "name": "Soybean Price Index",
+      "unit": "Index 2010=100",
+      "category": "crop",
+      "frequency": "monthly"
+    },
+    "rice": {
+      "id": "PRICENPQUSDM",
+      "name": "Rice Price Index",
+      "unit": "Index 2010=100",
+      "category": "crop",
+      "frequency": "monthly"
+    },
+    "barley": {
+      "id": "PBARLUSDM",
+      "name": "Barley Price Index",
+      "unit": "Index 2010=100",
+      "category": "crop",
+      "frequency": "monthly"
+    },
+    "phosphate": {
+      "id": "WPU02550301",
+      "name": "Phosphate Rock Price Index",
+      "unit": "Index",
+      "category": "fertilizer",
+      "frequency": "monthly"
+    },
+    "potash": {
+      "id": "WPU02550201",
+      "name": "Potash Price Index",
+      "unit": "Index",
+      "category": "fertilizer",
+      "frequency": "monthly"
+    },
+    "dap_fertilizer": {
+      "id": "WPU0652026A",
+      "name": "Mixed Fertilizer (DAP) Index",
+      "unit": "Index",
+      "category": "fertilizer",
+      "frequency": "monthly"
+    },
+    "urea": {
+      "id": "WPU0652013A",
+      "name": "Urea and Other Nitrogenous Compounds Index",
+      "unit": "Index",
+      "category": "fertilizer",
+      "frequency": "monthly"
+    },
+    "tsp_fertilizer": {
+      "id": "WPU0255",
+      "name": "Fertilizer Materials Index",
+      "unit": "Index",
+      "category": "fertilizer",
+      "frequency": "monthly"
+    },
+    "poultry": {
+      "id": "WPU017107",
+      "name": "Processed Poultry Price Index",
+      "unit": "Index",
+      "category": "livestock",
+      "frequency": "monthly"
+    },
+    "agricultural_raw_materials": {
+      "id": "PRAWMINDEXM",
+      "name": "Agricultural Raw Materials Index",
+      "unit": "Index 2016=100",
+      "category": "index",
+      "frequency": "monthly"
+    },
+    "cattle": {
+      "id": "PBEEFUSDM",
+      "name": "Beef Cattle Price",
+      "unit": "US Cents/Pound",
+      "category": "livestock",
+      "frequency": "monthly"
+    },
+    "food_price": {
+      "id": "PFOODINDEXM",
+      "name": "Global Food Price Index",
+      "unit": "Index 2010=100",
+      "category": "index",
+      "frequency": "monthly"
+    },
+    "dollar_index": {
+      "id": "DTWEXBGS",
+      "name": "US Dollar Index",
+      "unit": "Index",
+      "category": "economic",
+      "frequency": "daily"
+    },
+    "interest_rate": {
+      "id": "FEDFUNDS",
+      "name": "Federal Funds Rate",
+      "unit": "Percent",
+      "category": "economic",
+      "frequency": "monthly"
+    },
+    "swine": {
+      "id": "PPORKUSDM",
+      "name": "Swine Price Index",
+      "unit": "Index 2010=100",
+      "category": "livestock",
+      "frequency": "monthly"
+    }
+
+  }
+}
