@@ -1,27 +1,41 @@
 """
-Page 1 — Overview
-"What is happening right now?"
-Entry point: regime, top signals, commodity snapshot.
+Overview Module - Agricultural Commodity Tracker
+
+This module serves as the primary dashboard entry point, providing a real-time
+snapshot of market regimes, top anomalous signals, and commodity price trends.
+It interfaces directly with the centralized DuckDB pipeline.
 """
+
+import os
+import sys
+from typing import Optional, Tuple, Dict, Any
 
 import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
-import json, os, sys
 
+# ------------------------------------------------------------------ #
+# System Path & Imports                                              #
+# ------------------------------------------------------------------ #
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+
 from pipeline.data_pipeline import DataPipeline
 from utils.config_loader import ConfigLoader
+import utils.db  as db # Centralized DuckDB operations
 
+# ------------------------------------------------------------------ #
+# Page Configuration                                                 #
+# ------------------------------------------------------------------ #
 st.set_page_config(
-    page_title="Overview — Commodity Tracker",
-    page_icon="🌾",
+    page_title="Overview - Commodity Tracker",
     layout="wide",
     initial_sidebar_state="collapsed"
 )
 
-# ── CSS ───────────────────────────────────────────────────────────────────────
+# ------------------------------------------------------------------ #
+# CSS Styling                                                        #
+# ------------------------------------------------------------------ #
 st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;600&family=IBM+Plex+Sans:wght@300;400;600&display=swap');
@@ -34,7 +48,7 @@ html, body, [class*="css"] {
 
 .stApp { background-color: rgba(13, 15, 18, 1); }
 
-/* ── Page header ── */
+/* Page header */
 .page-header {
     border-bottom: 1px solid #2a2f3a;
     padding-bottom: 1.2rem;
@@ -57,7 +71,7 @@ html, body, [class*="css"] {
     line-height: 1.2;
 }
 
-/* ── Category cards ── */
+/* Category cards */
 .category-card {
     background: #141720;
     border: 1px solid #1e2330;
@@ -128,7 +142,7 @@ html, body, [class*="css"] {
 .commodity-row-chg.neg { color: rgba(239, 68, 68, 1); }
 .commodity-row-chg.neu { color: #64748b; }
 
-/* ── Signal rows ── */
+/* Signal rows */
 .signal-row {
     display: flex;
     align-items: center;
@@ -167,7 +181,7 @@ html, body, [class*="css"] {
 .signal-tag.over  { background: #1c2e1c; color: #4ade80; }
 .signal-tag.under { background: #2e1c1c; color: #f87171; }
 
-/* ── KPI strip ── */
+/* KPI strip */
 .kpi-strip {
     background: #141720;
     border: 1px solid #1e2330;
@@ -199,7 +213,7 @@ html, body, [class*="css"] {
 .kpi-delta.neg { color: rgba(239, 68, 68, 1); }
 .kpi-delta.neu { color: #64748b; }
 
-/* ── Section titles ── */
+/* Section titles */
 .section-title {
     font-family: 'IBM Plex Mono', monospace;
     font-size: 0.72rem;
@@ -233,22 +247,49 @@ div[data-testid="stMetricLabel"] {
 </style>
 """, unsafe_allow_html=True)
 
-# ── Data loading ──────────────────────────────────────────────────────────────
-@st.cache_data(ttl=3600)
-def load_data():
-    return DataPipeline().load_latest()
+# ------------------------------------------------------------------ #
+# Data Loading Operations                                            #
+# ------------------------------------------------------------------ #
 
 @st.cache_data(ttl=3600)
-def load_signals():
-    path = os.path.join('data', 'signals.json')
-    if not os.path.exists(path):
-        return [], {}
-    with open(path) as f:
-        d = json.load(f)
-    return d.get('signals', []), d.get('regime', {})
+def load_data() -> pd.DataFrame:
+    """
+    Load historical prices from DuckDB and pivot into a wide format DataFrame
+    where columns represent commodities and rows represent dates.
+    """
+    df_long = db.load_prices()
+    if df_long.empty:
+        return pd.DataFrame()
+    
+    df_wide = df_long.pivot(index='date', columns='commodity', values='value').reset_index()
+    df_wide = df_wide.sort_values('date')
+    return df_wide
 
 @st.cache_data(ttl=3600)
-def load_ratios():
+def load_signals() -> pd.DataFrame:
+    """
+    Load generated anomaly signals from the DuckDB signals table.
+    """
+    with db.get_connection() as conn:
+        query = "SELECT * FROM signals ORDER BY run_date DESC"
+        df = conn.execute(query).df()
+    return df
+
+@st.cache_data(ttl=3600)
+def load_forecasts() -> pd.DataFrame:
+    """
+    Load predictive forecasts from the DuckDB forecasts table.
+    """
+    with db.get_connection() as conn:
+        query = "SELECT * FROM forecasts ORDER BY run_date DESC"
+        df = conn.execute(query).df()
+    return df
+
+@st.cache_data(ttl=3600)
+def load_ratios() -> pd.DataFrame:
+    """
+    Load fallback commodity ratios if necessary.
+    """
     path = os.path.join('data', 'commodity_ratios.csv')
     if not os.path.exists(path):
         return pd.DataFrame()
@@ -256,37 +297,79 @@ def load_ratios():
     df['date'] = pd.to_datetime(df['date'])
     return df
 
-df              = load_data()
-signals, regime = load_signals()
-ratios_df       = load_ratios()
+# Initialize Data
+df = load_data()
+signals_df = load_signals()
+forecasts_df = load_forecasts()
+ratios_df = load_ratios()
 
 if df.empty:
-    st.error("No data found. Run `python automation/run_daily.py` first.")
+    st.error("No data found in DuckDB. Please verify the pipeline execution.")
     st.stop()
 
-# Exclude derived columns; retain raw price series only
-base_cols = [
-    c for c in df.columns
-    if c != 'date'
-    and not c.endswith(('_change_pct', '_ma', '_zscore', '_signal'))
-]
-latest = df.iloc[-1]
-prev   = df.iloc[-2] if len(df) > 1 else latest
+# Base logic definitions
+base_cols = [c for c in df.columns if c != 'date']
 
-# ── Page header ───────────────────────────────────────────────────────────────
-st.markdown("""
-<div class="page-header">
-  <p class="page-title">Agricultural Commodity Tracker</p>
-  <p class="page-subtitle">Market Overview</p>
-</div>
-""", unsafe_allow_html=True)
+# Prepare latest signals mapping
+latest_signals = pd.DataFrame()
+if not signals_df.empty:
+    max_date = signals_df['run_date'].max()
+    latest_signals = signals_df[signals_df['run_date'] == max_date]
 
-last_date     = df['date'].max().strftime('%d %b %Y')
-n_signals     = len(signals)
-n_extreme     = sum(1 for s in signals if abs(s.get('z_score', s.get('strength', 0))) > 2)
+# ------------------------------------------------------------------ #
+# Helper Functions                                                   #
+# ------------------------------------------------------------------ #
+
+def last_valid(col: str) -> Optional[float]:
+    """Retrieve the last valid non-null price for a specific commodity."""
+    if col not in df.columns:
+        return None
+    s = df[col].dropna()
+    return float(s.iloc[-1]) if not s.empty else None
+
+def get_change_pct(col: str) -> Optional[float]:
+    """Calculate the percentage change between the last two valid periods."""
+    if col not in df.columns:
+        return None
+    s = df[col].dropna()
+    if len(s) < 2:
+        return None
+    return float((s.iloc[-1] - s.iloc[-2]) / s.iloc[-2] * 100)
+
+def get_zscore(col: str) -> Optional[float]:
+    """Extract the most recently calculated z-score for the commodity."""
+    if latest_signals.empty:
+        return None
+    match = latest_signals[latest_signals['commodity'] == col]
+    if not match.empty:
+        return float(match.iloc[0]['z_score'])
+    return None
+
+# ------------------------------------------------------------------ #
+# UI: Header & KPI Bar                                               #
+# ------------------------------------------------------------------ #
+
+col_title, col_action = st.columns([10, 2])
+with col_title:
+    st.markdown("""
+    <div class="page-header">
+      <p class="page-title">Agricultural Commodity Tracker</p>
+      <p class="page-subtitle">Market Overview</p>
+    </div>
+    """, unsafe_allow_html=True)
+with col_action:
+    st.write("") # Spacing adjustment
+    if st.button("Refresh Data", use_container_width=True):
+        st.cache_data.clear()
+        st.rerun()
+
+last_date = df['date'].max().strftime('%d %b %Y')
 n_commodities = len(base_cols)
 
-# Top-level KPI strip
+n_signals = len(latest_signals)
+n_extreme = len(latest_signals[latest_signals['z_score'].abs() > 2]) if not latest_signals.empty else 0
+notable_count = len(latest_signals[latest_signals['z_score'].abs() > 1]) if not latest_signals.empty else 0
+
 k1, k2, k3, k4 = st.columns(4)
 
 with k1:
@@ -296,17 +379,14 @@ with k2:
 with k3:
     st.metric("Active Signals", n_signals, delta=f"{n_extreme} extreme" if n_extreme else None)
 with k4:
-    notable_count = sum(
-        1 for c in base_cols
-        if pd.notna(latest.get(f"{c}_zscore")) and abs(latest[f"{c}_zscore"]) > 1
-    )
     st.metric("Notable Moves", notable_count)
 
+# ------------------------------------------------------------------ #
+# UI: Historical Price Chart                                         #
+# ------------------------------------------------------------------ #
 
-# ── Price history chart ───────────────────────────────────────────────────────
 st.markdown('<p class="section-title">Price History by Category</p>', unsafe_allow_html=True)
 
-# Category display metadata: key -> (label,)
 CATEGORY_META = {
     'energy_input': ('', 'Energy Inputs'),
     'crop':         ('', 'Crops'),
@@ -316,16 +396,14 @@ CATEGORY_META = {
     'economic':     ('', 'Economic'),
 }
 
-# Group commodities present in the dataset by their configured category
 categories_data = {}
 for c in base_cols:
     info = ConfigLoader.get_commodity_info(c)
-    cat  = info.get('category', 'other')
+    cat = info.get('category', 'other')
     if cat not in categories_data:
         categories_data[cat] = []
     categories_data[cat].append(c)
 
-# Per-category colour palette
 CAT_COLORS = {
     'energy_input': ['rgba(245,158,11,1)',  'rgba(251,191,36,0.7)', 'rgba(217,119,6,0.7)',  'rgba(180,83,9,0.5)',   'rgba(120,53,15,0.5)'],
     'crop':         ['rgba(34,197,94,1)',   'rgba(74,222,128,0.7)', 'rgba(22,163,74,0.7)',  'rgba(21,128,61,0.5)',  'rgba(20,83,45,0.5)'],
@@ -335,7 +413,6 @@ CAT_COLORS = {
     'economic':     ['rgba(148,163,184,1)', 'rgba(100,116,139,0.7)'],
 }
 
-# Category multi-select filter
 selected_cats = st.multiselect(
     'Filter categories',
     options=list(CATEGORY_META.keys()),
@@ -352,8 +429,8 @@ for cat_key in (selected_cats or list(categories_data.keys())):
     for i, c in enumerate(commodities_in_cat):
         if c not in df.columns:
             continue
-        info  = ConfigLoader.get_commodity_info(c)
-        name  = info.get('name', c.replace('_', ' ').title())
+        info = ConfigLoader.get_commodity_info(c)
+        name = info.get('name', c.replace('_', ' ').title())
         color = colors[i % len(colors)]
 
         series = df[['date', c]].dropna(subset=[c])
@@ -401,17 +478,12 @@ fig.update_layout(
 
 st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
 
-# ── Commodity category cards ──────────────────────────────────────────────────
+# ------------------------------------------------------------------ #
+# UI: Commodity Category Cards                                       #
+# ------------------------------------------------------------------ #
+
 st.markdown('<p class="section-title">Commodities by Category</p>', unsafe_allow_html=True)
 
-def last_valid(col):
-    """Return the last non-null value for a given column, or None."""
-    if col not in df.columns:
-        return None
-    s = df[col].dropna()
-    return float(s.iloc[-1]) if not s.empty else None
-
-# Render category cards in rows of three
 cat_keys = list(CATEGORY_META.keys())
 for k in categories_data:
     if k not in cat_keys:
@@ -428,18 +500,18 @@ for row_start in range(0, len(cat_keys), 3):
 
         rows_html = ''
         for c in commodities_in_cat:
-            info  = ConfigLoader.get_commodity_info(c)
-            name  = info.get('name', c.replace('_', ' ').title())
-            unit  = info.get('unit', '')
+            info = ConfigLoader.get_commodity_info(c)
+            name = info.get('name', c.replace('_', ' ').title())
+            
             price = last_valid(c)
-            chg   = last_valid(f'{c}_change_pct')
+            chg = get_change_pct(c)
 
             price_str = f'{price:.2f}' if price is not None else '—'
 
             if chg is not None:
-                chg_cls  = 'pos' if chg > 0 else ('neg' if chg < 0 else 'neu')
+                chg_cls = 'pos' if chg > 0 else ('neg' if chg < 0 else 'neu')
                 chg_sign = '+' if chg > 0 else ''
-                chg_str  = f'{chg_sign}{chg:.2f}%'
+                chg_str = f'{chg_sign}{chg:.2f}%'
             else:
                 chg_cls, chg_str = 'neu', '—'
 
@@ -459,18 +531,19 @@ for row_start in range(0, len(cat_keys), 3):
             </div>
             """, unsafe_allow_html=True)
 
-# ── Active signals ────────────────────────────────────────────────────────────
-st.markdown('<p class="section-title">Active Signals — Statistical Anomalies (|z| > 1)</p>',
-            unsafe_allow_html=True)
+# ------------------------------------------------------------------ #
+# UI: Active Anomalous Signals                                       #
+# ------------------------------------------------------------------ #
 
-# Derive live signals from the most recent row of the dataset
+st.markdown('<p class="section-title">Active Signals - Statistical Anomalies (|z| > 1)</p>', unsafe_allow_html=True)
+
 live_signals = []
-latest_row = df.iloc[-1]
 
-for c in base_cols:
-    z_col = f"{c}_zscore"
-    if z_col in df.columns:
-        z = latest_row.get(z_col)
+if not latest_signals.empty:
+    for _, row in latest_signals.iterrows():
+        c = row['commodity']
+        z = row['z_score']
+        
         if pd.notna(z) and abs(z) > 1:
             info = ConfigLoader.get_commodity_info(c)
             live_signals.append({
@@ -480,7 +553,6 @@ for c in base_cols:
                 'type': 'overvalued' if z > 0 else 'undervalued'
             })
 
-# Sort by absolute z-score, most significant first
 live_signals.sort(key=lambda x: abs(x['z']), reverse=True)
 
 if live_signals:
@@ -490,8 +562,8 @@ if live_signals:
     for col_widget, chunk in [(sig_col1, live_signals[:half]), (sig_col2, live_signals[half:])]:
         with col_widget:
             for s in chunk:
-                level     = 'extreme' if abs(s['z']) > 2 else 'notable'
-                tag       = 'over'    if s['type'] == 'overvalued' else 'under'
+                level = 'extreme' if abs(s['z']) > 2 else 'notable'
+                tag = 'over' if s['type'] == 'overvalued' else 'under'
                 tag_label = 'ABOVE NORM' if s['type'] == 'overvalued' else 'BELOW NORM'
                 st.markdown(f"""
                 <div class="signal-row {level}">
@@ -505,11 +577,14 @@ else:
     <div style="padding:1.5rem;background:#141720;border-radius:8px;
                 border:1px solid #1e2330;color:#64748b;
                 font-family:'IBM Plex Mono',monospace;font-size:0.85rem;">
-        No anomalous signals — all commodities within normal statistical range.
+        No anomalous signals detected — all commodities within standard statistical bounds.
     </div>
     """, unsafe_allow_html=True)
 
-# ── Commodity snapshot table ──────────────────────────────────────────────────
+# ------------------------------------------------------------------ #
+# UI: Commodity Snapshot Table                                       #
+# ------------------------------------------------------------------ #
+
 st.markdown('<p class="section-title">Commodity Snapshot</p>', unsafe_allow_html=True)
 
 rows = []
@@ -517,20 +592,14 @@ for c in base_cols:
     info = ConfigLoader.get_commodity_info(c)
     freq = info.get('frequency', 'monthly')
 
-    def last_valid_snap(col):
-        if col not in df.columns:
-            return None
-        s = df[col].dropna()
-        return float(s.iloc[-1]) if not s.empty else None
-
-    cur = last_valid_snap(c)
-    chg = last_valid_snap(f'{c}_change_pct')
-    z   = last_valid_snap(f'{c}_zscore')
+    cur = last_valid(c)
+    chg = get_change_pct(c)
+    z = get_zscore(c)
 
     if z is not None:
-        if   abs(z) > 2: sig = 'Extreme'
+        if abs(z) > 2: sig = 'Extreme'
         elif abs(z) > 1: sig = 'Notable'
-        else:            sig = 'Normal'
+        else: sig = 'Normal'
     else:
         sig = '—'
 
@@ -540,28 +609,38 @@ for c in base_cols:
         'Freq':      freq.title()[:3],
         'Price':     round(cur, 2) if cur is not None else None,
         'Chg %':     round(chg, 2) if chg is not None else None,
-        'Z-Score':   round(z,   2) if z   is not None else None,
+        'Z-Score':   round(z, 2) if z is not None else None,
         'Signal':    sig,
     })
 
-# Sort by absolute z-score descending
-snap_df = pd.DataFrame(rows).sort_values('Z-Score', key=lambda x: x.abs(), ascending=False)
+snap_df = pd.DataFrame(rows)
+
+snap_df['Z-Score'] = pd.to_numeric(
+    snap_df['Z-Score'],
+    errors='coerce'
+)
+
+snap_df = snap_df.sort_values(
+    'Z-Score',
+    key=lambda x: x.abs(),
+    ascending=False
+)
 
 def color_z(val):
     if val is None or (isinstance(val, float) and np.isnan(val)):
         return ''
-    if   abs(val) > 2: return 'color: rgba(239, 68, 68, 1); font-weight:600'
+    if abs(val) > 2: return 'color: rgba(239, 68, 68, 1); font-weight:600'
     elif abs(val) > 1: return 'color: rgba(245, 158, 11, 1); font-weight:600'
-    else:              return 'color: #4ade80'
+    else: return 'color: #4ade80'
 
 def color_chg(val):
-    if val > 0:   return 'color: #4ade80'
+    if val > 0: return 'color: #4ade80'
     elif val < 0: return 'color: #f87171'
     return ''
 
 st.dataframe(
     snap_df.style
-        .applymap(color_z,   subset=['Z-Score'])
+        .applymap(color_z, subset=['Z-Score'])
         .applymap(color_chg, subset=['Chg %'])
         .format({
             'Price':   lambda x: f'{x:.2f}' if x is not None and not np.isnan(x) else '—',
@@ -576,7 +655,7 @@ st.dataframe(
 st.markdown(
     "<p style='font-family:IBM Plex Mono,monospace;font-size:0.68rem;"
     "color:rgba(51, 65, 85, 1);margin-top:0.5rem;'>"
-    f"Data source: FRED API · {last_date} · "
+    f"Data source: Central DuckDB Warehouse · {last_date} · "
     f"{n_commodities} series tracked</p>",
     unsafe_allow_html=True
 )

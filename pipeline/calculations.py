@@ -1,19 +1,29 @@
 """
 Agricultural Commodities Calculations
+
 Focus: meaningful trend indicators, z-score signals, and market regime detection.
 
 What was removed and why:
-- crop_spreads (nominal): corn minus wheat in USD is meaningless across different units
-- crop_spreads (ratio): corn/wheat retained only as part of profitability context
-- categorize_ratios: fragile string-matching replaced with explicit mapping logic
+- crop_spreads (nominal): corn minus wheat in USD is meaningless across different units.
+- crop_spreads (ratio): corn/wheat retained only as part of profitability context.
+- categorize_ratios: fragile string-matching replaced with explicit mapping logic.
 
 What remains and why it matters:
-- crop_profitability_ratios: directional signal of crop price vs input cost pressure
-- cost_indices: normalised input cost environment, actionable across commodities
-- z-score signals: statistical anomaly detection — the core value of this module
-- market regime: classifies the current cost environment for dashboard context
-- CorrelationAnalysis: crop-input price transmission, useful for forecasting context
+- crop_profitability_ratios: directional signal of crop price vs input cost pressure.
+- cost_indices: normalised input cost environment, actionable across commodities.
+- z-score signals: statistical anomaly detection — the core value of this module.
+- market regime: classifies the current cost environment for dashboard context.
+- CorrelationAnalysis: crop-input price transmission, useful for forecasting context.
+
+Z-score definition (unified):
+    All z-scores use a rolling window calibrated per data frequency (daily/weekly/
+    monthly/quarterly) via ConfigLoader. The page layer must NOT recompute z-scores
+    with a full-history mean/std — doing so produces a different number than what
+    the pipeline computes and creates silent inconsistencies. Always consume the
+    zscores DataFrame returned by calculate_all().
 """
+
+from __future__ import annotations
 
 import pandas as pd
 import numpy as np
@@ -23,20 +33,31 @@ import os
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from utils.config_loader import ConfigLoader
+from config.settings import get_settings
+
 
 logger = logging.getLogger(__name__)
 
 
 class CommoditiesAnalytics:
+    """
+    Core analytics pipeline for agricultural commodities.
+    """
 
     def __init__(self, df: pd.DataFrame):
-        self.df = df.copy()
+        # Drop the date column if present — all operations are row-index based.
+        # The date column is re-attached by the caller after calculate_all() returns,
+        # using the original df date values. This prevents NaN injection into ratio
+        # calculations when the page layer passes a wide df that includes a date col.
+        self.df = df.drop(columns=["date"], errors="ignore").copy()
         self.categories = ConfigLoader.get_categories()
         logger.info("CommoditiesAnalytics initialised")
 
-    # ── Internal helpers ──────────────────────────────────────────────────────
+    # ------------------------------------------------------------------ #
+    # Internal Helpers                                                   #
+    # ------------------------------------------------------------------ #
 
-    def _align(self, c1, c2):
+    def _align(self, c1: str, c2: str) -> tuple[pd.Series, pd.Series]:
         """
         Forward-fill both series before operating on them.
 
@@ -47,9 +68,11 @@ class CommoditiesAnalytics:
         """
         return self.df[c1].ffill(), self.df[c2].ffill()
 
-    # ── Ratio calculations ────────────────────────────────────────────────────
+    # ------------------------------------------------------------------ #
+    # Ratio Calculations                                                 #
+    # ------------------------------------------------------------------ #
 
-    def crop_profitability_ratios(self):
+    def crop_profitability_ratios(self) -> pd.DataFrame:
         """
         Compute crop price divided by input cost for every crop-input pair.
 
@@ -94,16 +117,15 @@ class CommoditiesAnalytics:
 
         return ratios.dropna(axis=1, how='all')
 
-    def cost_indices(self):
+    def cost_indices(self) -> pd.DataFrame:
         """
         Build a normalised cost index for energy inputs and fertilizers.
 
         Method:
             Each commodity in the category is divided by its own full-period
             mean and multiplied by 100. This transforms all series to the same
-            scale regardless of original units (USD/gallon, USD/ton, etc.).
-            The index is the simple average of all normalised series in the
-            category.
+            scale regardless of original units. The index is the simple average 
+            of all normalised series in the category.
 
                 Index_t = mean_i [ (P_i_t / mean(P_i)) * 100 ]
 
@@ -111,11 +133,6 @@ class CommoditiesAnalytics:
             Index = 100  -> current costs at their historical average
             Index > 110  -> above-average cost environment (~1 normalised std)
             Index < 90   -> below-average cost environment
-
-        Unlike the raw profitability ratios above, the index value IS
-        meaningful as an absolute number because all inputs share the same
-        baseline (100 = own historical mean). This makes cross-time comparison
-        valid and powers the regime classification downstream.
         """
         indices = pd.DataFrame(index=self.df.index)
 
@@ -138,61 +155,74 @@ class CommoditiesAnalytics:
 
         return indices
 
-    # ── Z-score signals ───────────────────────────────────────────────────────
+    # ------------------------------------------------------------------ #
+    # Z-Score Signals                                                    #
+    # ------------------------------------------------------------------ #
 
-    def calculate_zscores(self, df: pd.DataFrame, window: int = 60) -> pd.DataFrame:
+    def calculate_zscores(self, df: pd.DataFrame) -> pd.DataFrame:
         """
         Compute rolling z-scores for every column in the input DataFrame.
 
-        A z-score measures how many standard deviations the current value
-        lies from the rolling mean:
+        THIS IS THE SINGLE AUTHORITATIVE Z-SCORE DEFINITION for the pipeline.
+        Dashboard pages must consume the zscores DataFrame returned by
+        calculate_all() — never recompute with a full-history mean/std, as
+        that yields a different (and inconsistent) number.
 
-            z_t = (x_t - mu_t) / sigma_t
+        Window logic:
+            For profitability ratios (col contains "_to_"), the base commodity
+            is the crop (left side of the pair). For cost indices, the base is
+            the category name. ConfigLoader resolves the data frequency for that
+            base commodity and returns the appropriate z_window from
+            commodities.json (e.g. monthly -> 24, weekly -> 52).
+            Falls back to 60 periods if config is not found.
 
-        where mu_t and sigma_t are the rolling mean and standard deviation
-        over the specified window.
+            z_t = (x_t - rolling_mean_t) / (rolling_std_t + 1e-8)
 
-        Window choice (default = 60):
-            A window of 60 observations balances two competing goals:
-            - Long enough to estimate a stable mean and std (reduces noise)
-            - Short enough to adapt to structural shifts in market levels
-              (avoids flagging genuinely new price regimes as anomalies)
-
-            For commodity ratios that update at monthly or quarterly
-            frequency, 60 observations corresponds to roughly 5 years of
-            monthly data — a reasonable lookback for agricultural markets.
-
-        A small epsilon (1e-8) is added to the denominator to prevent
-        division-by-zero on constant or near-constant sub-series.
+        The epsilon prevents division-by-zero on constant sub-series.
+        min_periods is set to max(3, window//4) so early observations
+        produce a value rather than NaN for the entire warm-up period.
         """
         zscores = pd.DataFrame(index=df.index)
 
-        for col in df.columns:
-            mean = df[col].rolling(window).mean()
-            std  = df[col].rolling(window).std()
-            zscores[col + '_zscore'] = (df[col] - mean) / (std + 1e-8)
+        # Defensive guard: skip date column if it slipped through
+        numeric_cols = [c for c in df.columns if c != 'date']
+
+        for col in numeric_cols:
+            # Resolve base commodity to look up its data frequency
+            if '_to_' in col:
+                base_name = col.split('_to_')[0]         # crop side of the ratio
+            else:
+                base_name = col.replace('_cost_index', '').replace('_input', '')
+
+            freq          = ConfigLoader.get_commodity_frequency(base_name)
+            metric_config = ConfigLoader.get_metric_config(freq)
+            window        = metric_config.get('z_window', 60) if metric_config else 60
+            min_p         = max(3, window // 4)
+
+            mean = df[col].rolling(window, min_periods=min_p).mean()
+            std  = df[col].rolling(window, min_periods=min_p).std()
+            zscores[f"{col}_zscore"] = (df[col] - mean) / (std + 1e-8)
 
         return zscores
+    # ------------------------------------------------------------------ #
+    # Signal Generation                                                  #
+    # ------------------------------------------------------------------ #
 
-    # ── Signal generation ─────────────────────────────────────────────────────
-
-    def generate_signals(self, zscores: pd.DataFrame, threshold: float = 2.0) -> list:
+    def generate_signals(self, zscores: pd.DataFrame) -> list:
         """
         Identify statistically anomalous values in the most recent observation.
 
-        A signal is raised when |z| > threshold. The default threshold of 2.0
-        corresponds to the outermost ~5% of a normal distribution (top and
-        bottom 2.5% combined), making it a meaningful but not overly sensitive
-        trigger for commodity markets.
-
-        Setting threshold = 2.0 rather than 1.5 deliberately filters out
-        moderate deviations that are common in volatile commodity series,
-        keeping only those that warrant attention in a dashboard context.
+        The threshold is no longer hardcoded; it is dynamically read from 
+        the global application Settings (e.g., ALERT_ZSCORE_THRESHOLD).
 
         Returns a list of signal dicts sorted by absolute z-score descending,
         so the most anomalous metrics surface first.
         """
         signals = []
+        
+        # Load the global pipeline settings dynamically
+        settings = get_settings()
+        threshold = settings.alert_zscore_threshold
 
         for col in zscores.columns:
             val = zscores[col].iloc[-1]
@@ -210,7 +240,9 @@ class CommoditiesAnalytics:
 
         return sorted(signals, key=lambda x: x['strength'], reverse=True)
 
-    # ── Regime detection ──────────────────────────────────────────────────────
+    # ------------------------------------------------------------------ #
+    # Regime Detection                                                   #
+    # ------------------------------------------------------------------ #
 
     def detect_market_regime(self, indices: pd.DataFrame) -> dict:
         """
@@ -224,11 +256,6 @@ class CommoditiesAnalytics:
         The symmetric ±10 band around 100 is intentionally conservative.
         Commodity input costs are structurally volatile; labelling anything
         outside a ±5 band as extreme would generate excessive regime switches.
-        A ±10 band corresponds roughly to one normalised standard deviation
-        across the energy and fertilizer series in this dataset.
-
-        The result is a plain dict (JSON-serialisable) consumed by the
-        Analytics dashboard page and the daily automation summary log.
         """
         if indices.empty:
             return {}
@@ -268,18 +295,13 @@ class CommoditiesAnalytics:
 
         return regime
 
-    # ── Main pipeline ─────────────────────────────────────────────────────────
+    # ------------------------------------------------------------------ #
+    # Main Pipeline                                                      #
+    # ------------------------------------------------------------------ #
 
-    def calculate_all(self):
+    def calculate_all(self) -> tuple[pd.DataFrame, dict]:
         """
         Execute the full analytics pipeline in dependency order.
-
-        Execution order:
-            1. crop_profitability_ratios  — raw directional signals
-            2. cost_indices               — normalised cost environment
-            3. calculate_zscores          — anomaly detection on all metrics
-            4. generate_signals           — filter to actionable z-score alerts
-            5. detect_market_regime       — high-level cost environment label
 
         Returns:
             combined   (DataFrame): all ratio and index columns, date-aligned
@@ -312,7 +334,9 @@ class CommoditiesAnalytics:
         }
 
 
-# ── Correlation analysis ──────────────────────────────────────────────────────
+# ------------------------------------------------------------------ #
+# Correlation Analysis                                               #
+# ------------------------------------------------------------------ #
 
 class CorrelationAnalysis:
     """
@@ -323,9 +347,6 @@ class CorrelationAnalysis:
     pass through cost increases to output prices. Low or negative correlation
     indicates decoupled markets — margin pressure cannot be offset by higher
     crop prices.
-
-    This is also relevant for forecasting: highly correlated crop-input pairs
-    can use input cost series as leading or concurrent predictors.
     """
 
     def __init__(self, df: pd.DataFrame):
@@ -334,14 +355,6 @@ class CorrelationAnalysis:
     def key_correlations(self) -> pd.DataFrame:
         """
         Compute Pearson correlation coefficients for all crop-input pairs.
-
-        Pearson r measures linear association between two series:
-
-            r = cov(X, Y) / (std(X) * std(Y))
-
-        Values range from -1 (perfect inverse relationship) to +1 (perfect
-        positive relationship). Both series are forward-filled before
-        computation to handle mixed-frequency gaps consistently.
 
         Results are sorted by absolute correlation descending so the strongest
         relationships — positive or negative — surface at the top of the table.

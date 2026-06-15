@@ -1,28 +1,40 @@
 """
-Page 2 — Analysis
-"Why is it happening? What does history say?"
-Price trends with context: moving averages, percentile position, correlations.
+Page 2 - Analysis
+Analyzes historical trends, z-scores, percentiles, and moving averages
+using the centralized DuckDB data store.
 """
 
-import streamlit as st
-import pandas as pd
-import numpy as np
-import plotly.graph_objects as go
-import plotly.express as px
-import sys, os
+import os
+import sys
 
+import numpy as np
+import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
+import streamlit as st
+
+# Append path to access root modules
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
-from pipeline.data_pipeline import DataPipeline
+
+import utils.db  as db
+
+from utils.db import get_connection, load_prices
 from utils.config_loader import ConfigLoader
 
+# ------------------------------------------------------------------ #
+# Page Configuration                                                 #
+# ------------------------------------------------------------------ #
+
 st.set_page_config(
-    page_title="Analysis — Commodity Tracker",
-    page_icon="📈",
+    page_title="Analysis - Commodity Tracker",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-# ── CSS (shared design system with Overview) ──────────────────────────────────
+# ------------------------------------------------------------------ #
+# CSS / Design System                                                #
+# ------------------------------------------------------------------ #
+
 st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;600&family=IBM+Plex+Sans:wght@300;400;600&display=swap');
@@ -72,76 +84,152 @@ CHART_THEME = dict(
                color='rgba(51, 65, 85, 1)', tickcolor='rgba(51, 65, 85, 1)'),
 )
 
-# ── Data loading ──────────────────────────────────────────────────────────────
-@st.cache_data(ttl=3600)
-def load_data():
-    return DataPipeline().load_latest()
+# ------------------------------------------------------------------ #
+# Data Access Layer                                                  #
+# ------------------------------------------------------------------ #
 
+@st.cache_data(ttl=3600)
+def load_signals() -> pd.DataFrame:
+    """
+    Retrieve quantitative signals (e.g., z-scores) from DuckDB.
+    """
+    query = "SELECT * FROM signals ORDER BY run_date ASC"
+    with get_connection() as conn:
+        return conn.execute(query).df()
+
+@st.cache_data(ttl=3600)
+def load_forecasts() -> pd.DataFrame:
+    """
+    Retrieve price forecasts from DuckDB.
+    """
+    query = "SELECT * FROM forecasts ORDER BY run_date ASC"
+    with get_connection() as conn:
+        return conn.execute(query).df()
+
+@st.cache_data(ttl=3600)
+def load_data() -> pd.DataFrame:
+    """
+    Load main analytical dataset. Extracts prices and signals from DuckDB,
+    then transforms the long-format SQL tables into a wide-format DataFrame
+    suitable for UI and vectorized chart operations.
+    """
+    # Retrieve raw prices
+    df_prices = load_prices()
+    if df_prices.empty:
+        return pd.DataFrame()
+        
+    # Pivot prices into wide format (rows: dates, columns: commodities)
+    df_wide = df_prices.pivot(index='date', columns='commodity', values='value').reset_index()
+    df_wide['date'] = pd.to_datetime(df_wide['date'])
+    
+    # Merge quantitative signals (e.g., z-scores) if available
+    df_signals = load_signals()
+    if not df_signals.empty and 'z_score' in df_signals.columns:
+        try:
+            z_wide = df_signals.pivot(index='run_date', columns='commodity', values='z_score').reset_index()
+            z_wide = z_wide.rename(columns={'run_date': 'date'})
+            z_wide['date'] = pd.to_datetime(z_wide['date'])
+            
+            # Map column names to analytical convention (e.g. 'corn_zscore')
+            rename_map = {c: f"{c}_zscore" for c in z_wide.columns if c != 'date'}
+            z_wide = z_wide.rename(columns=rename_map)
+            
+            df_wide = pd.merge(df_wide, z_wide, on='date', how='left')
+        except Exception as e:
+            # Silently pass if pivot fails due to duplicates/missing metric dimensions
+            pass
+            
+    # Compute operational moving averages (30 days default)
+    for c in df_prices['commodity'].unique():
+        if c in df_wide.columns:
+            df_wide[f"{c}_ma"] = df_wide[c].rolling(window=30, min_periods=1).mean()
+            
+    # Ensure forward filling to maintain chart continuity
+    df_wide = df_wide.ffill()
+    return df_wide
+
+
+# Initialize Data
 df = load_data()
 
 if df.empty:
-    st.error("No data found. Run `python automation/run_daily.py` first.")
+    st.error("No data found in DuckDB. Please ensure the pipeline has successfully populated the 'prices' table.")
     st.stop()
 
-# Exclude derived columns; retain only raw price series
+# Define base analytical columns (excluding calculated metric suffixes)
 base_cols = [
     c for c in df.columns
     if c != 'date' and not c.endswith(('_change_pct', '_ma', '_zscore', '_signal'))
 ]
 categories = ConfigLoader.get_categories()
 
-# ── Page header ───────────────────────────────────────────────────────────────
+# ------------------------------------------------------------------ #
+# View: Header                                                       #
+# ------------------------------------------------------------------ #
+
 st.markdown("""
 <div class="page-header">
   <p class="page-title">Agricultural Commodity Tracker</p>
-  <p class="page-subtitle">Price Analysis</p>
+  <p class="page-subtitle">Market Analysis</p>
 </div>
 """, unsafe_allow_html=True)
 
-# ── Sidebar controls ──────────────────────────────────────────────────────────
-st.sidebar.markdown("### Controls")
+# ------------------------------------------------------------------ #
+# View: Sidebar Controls                                             #
+# ------------------------------------------------------------------ #
 
-# Build category filter options
+st.sidebar.markdown("### Application Controls")
+
+# Force Cache Refresh
+if st.sidebar.button("Refresh Data Cache", type="primary"):
+    st.cache_data.clear()
+    st.rerun()
+
+st.sidebar.markdown("---")
+st.sidebar.markdown("### Chart Configuration")
+
 cat_options = {'All': base_cols}
 for cat, items in categories.items():
     filtered = [c for c in items if c in base_cols]
     if filtered:
         cat_options[cat.replace('_', ' ').title()] = filtered
 
-selected_cat = st.sidebar.selectbox("Category", list(cat_options.keys()))
+selected_cat = st.sidebar.selectbox("Market Sector", list(cat_options.keys()))
 pool = cat_options[selected_cat]
 
-# Commodity multi-select within the chosen category
 selected = st.sidebar.multiselect(
-    "Commodities",
+    "Assets",
     pool,
     default=pool[:min(3, len(pool))],
     format_func=lambda x: ConfigLoader.get_commodity_info(x).get('name', x.replace('_',' ').title())
 )
 
 st.sidebar.markdown("---")
-normalize  = st.sidebar.checkbox("Normalize to base 100", value=False)
-show_ma    = st.sidebar.checkbox("Show moving average", value=True)
-show_z     = st.sidebar.checkbox("Show z-score panel", value=True)
+normalize  = st.sidebar.checkbox("Normalize (Base 100)", value=False)
+show_ma    = st.sidebar.checkbox("Display Moving Average", value=True)
+show_z     = st.sidebar.checkbox("Display Statistical Z-Score", value=True)
 time_range = st.sidebar.select_slider(
-    "Time window",
+    "Observation Window",
     options=['3M', '6M', '1Y', '2Y', 'All'],
     value='2Y'
 )
 
-# Filter the dataset to the selected time window
+# Time Series Filtering
 cutoff_map = {'3M': 90, '6M': 180, '1Y': 365, '2Y': 730, 'All': 99999}
 cutoff_days = cutoff_map[time_range]
 df_view = df[df['date'] >= df['date'].max() - pd.Timedelta(days=cutoff_days)].copy()
 
 if not selected:
-    st.info("Select at least one commodity from the sidebar.")
+    st.info("Awaiting asset selection from the configuration menu.")
     st.stop()
 
 latest = df_view.iloc[-1]
 
-# ── Current Values strip ──────────────────────────────────────────────────────
-st.markdown('<p class="section-title">Current Values</p>', unsafe_allow_html=True)
+# ------------------------------------------------------------------ #
+# View: Real-Time Values Board                                       #
+# ------------------------------------------------------------------ #
+
+st.markdown('<p class="section-title">Current Market Values</p>', unsafe_allow_html=True)
 
 cols = st.columns(min(len(selected), 5))
 for i, c in enumerate(selected[:5]):
@@ -152,7 +240,7 @@ for i, c in enumerate(selected[:5]):
         z     = latest[z_col] if z_col in df_view.columns else None
         pctile = (df[c].dropna() < cur).mean() * 100
 
-        # Colour-code the percentile bar by historical position
+        # Assess percentile boundaries for UI indicators
         if   pctile > 80: bar_color = 'rgba(239, 68, 68, 1)'
         elif pctile < 20: bar_color = 'rgba(34, 197, 94, 1)'
         else:             bar_color = 'rgba(245, 158, 11, 1)'
@@ -174,11 +262,13 @@ for i, c in enumerate(selected[:5]):
         </div>
         """, unsafe_allow_html=True)
 
-# ── Price trend chart ─────────────────────────────────────────────────────────
-st.markdown('<p class="section-title">Price Trends</p>', unsafe_allow_html=True)
+# ------------------------------------------------------------------ #
+# View: Primary Time Series Chart                                    #
+# ------------------------------------------------------------------ #
+
+st.markdown('<p class="section-title">Historical Price Trends</p>', unsafe_allow_html=True)
 
 ACCENT_COLORS = ['rgba(245, 158, 11, 1)', 'rgba(34, 197, 94, 1)', 'rgba(56, 189, 248, 1)', '#a78bfa', '#f87171', '#34d399']
-
 fig = go.Figure()
 
 for idx, c in enumerate(selected):
@@ -186,7 +276,7 @@ for idx, c in enumerate(selected):
     color = ACCENT_COLORS[idx % len(ACCENT_COLORS)]
     name  = info.get('name', c.replace('_', ' ').title())
 
-    # Rebase to 100 at the start of the window if normalisation is active
+    # Rebase mathematical transformations if enabled
     y = (df_view[c] / df_view[c].dropna().iloc[0] * 100) if normalize else df_view[c]
 
     fig.add_trace(go.Scatter(
@@ -196,6 +286,7 @@ for idx, c in enumerate(selected):
         hovertemplate=f'<b>{name}</b><br>%{{x|%d %b %Y}}<br>%{{y:.2f}}<extra></extra>'
     ))
 
+    # Optional Moving Average Trace
     if show_ma:
         ma_col = f"{c}_ma"
         if ma_col in df_view.columns:
@@ -218,26 +309,29 @@ fig.update_layout(
         bgcolor='rgba(0,0,0,0)',
         font=dict(size=10, color='rgba(148, 163, 184, 1)')
     ),
-    yaxis_title="Index (base 100)" if normalize else "Price",
+    yaxis_title="Normalized Index (Base 100)" if normalize else "Asset Price",
 )
 
 st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
 
 if normalize:
-    st.caption("All series rebased to 100 at the start of the selected window.")
+    st.caption("Timeseries data is synthetically rebased to an index of 100 for proper scale comparison.")
 
-# ── Z-Score panel (single commodity only) ────────────────────────────────────
+# ------------------------------------------------------------------ #
+# View: Single-Asset Detailed Diagnostics                            #
+# ------------------------------------------------------------------ #
+
+# Render Z-Score context if precisely 1 asset is evaluated
 if show_z and len(selected) == 1:
     c = selected[0]
     z_col = f"{c}_zscore"
     if z_col in df_view.columns:
-        st.markdown('<p class="section-title">Z-Score — Statistical Context</p>',
+        st.markdown('<p class="section-title">Statistical Deviation (Z-Score)</p>',
                     unsafe_allow_html=True)
 
         fig_z = go.Figure()
         z_series = df_view[z_col]
 
-        # Colour bars by deviation threshold
         colors_z = ['rgba(239, 68, 68, 1)' if abs(z) > 2 else 'rgba(245, 158, 11, 1)' if abs(z) > 1 else 'rgba(51, 65, 85, 1)'
                     for z in z_series]
 
@@ -247,7 +341,7 @@ if show_z and len(selected) == 1:
             hovertemplate='%{x|%d %b %Y}<br>Z: %{y:.2f}σ<extra></extra>'
         ))
 
-        # Reference lines at ±1σ and ±2σ
+        # Deviation reference bands
         for y_val, color in [(2,'rgba(239, 68, 68, 1)30'), (-2,'rgba(239, 68, 68, 1)30'), (1,'rgba(245, 158, 11, 1)20'), (-1,'rgba(245, 158, 11, 1)20')]:
             fig_z.add_hline(y=y_val, line_dash='dot', line_color=color, line_width=1)
         fig_z.add_hline(y=0, line_color='#1e2330', line_width=1)
@@ -257,19 +351,19 @@ if show_z and len(selected) == 1:
             height=180,
             margin=dict(l=0, r=0, t=4, b=0),
             showlegend=False,
-            yaxis_title="σ"
+            yaxis_title="Standard Dev (σ)"
         )
         st.plotly_chart(fig_z, use_container_width=True, config={'displayModeBar': False})
-        st.caption("|z| > 2 = extreme  |  |z| > 1 = notable  |  Z computed on a rolling window adapted to data frequency.")
+        st.caption("|z| > 2: Standard Deviation Threshold Breached | Rolling statistical logic enforced via DuckDB metrics.")
 
-# ── Historical price distribution ─────────────────────────────────────────────
+# Frequency Distribution Plotting
 if len(selected) == 1:
     c = selected[0]
     info = ConfigLoader.get_commodity_info(c)
     name = info.get('name', c.replace('_', ' ').title())
     cur  = latest[c]
 
-    st.markdown('<p class="section-title">Historical Distribution</p>', unsafe_allow_html=True)
+    st.markdown('<p class="section-title">Historical Frequency Distribution</p>', unsafe_allow_html=True)
 
     series = df[c].dropna()
     pctile = (series < cur).mean() * 100
@@ -282,17 +376,16 @@ if len(selected) == 1:
         marker_line=dict(color='rgba(56, 189, 248, 1)30', width=0.5),
         name='Historical'
     ))
-    # Current price marker
+    
     fig_hist.add_vline(
         x=cur, line_color='rgba(245, 158, 11, 1)', line_width=2,
-        annotation_text=f"Now ({pctile:.0f}th pct.)",
+        annotation_text=f"Current ({pctile:.0f}th pct)",
         annotation_font=dict(color='rgba(245, 158, 11, 1)', size=10, family='IBM Plex Mono'),
         annotation_position="top right"
     )
-    # Median reference line
     fig_hist.add_vline(
         x=series.median(), line_color='rgba(51, 65, 85, 1)', line_dash='dot', line_width=1,
-        annotation_text="Median",
+        annotation_text="Median Value",
         annotation_font=dict(color='#475569', size=9, family='IBM Plex Mono'),
         annotation_position="top left"
     )
@@ -302,15 +395,15 @@ if len(selected) == 1:
         height=220,
         margin=dict(l=0, r=0, t=4, b=0),
         showlegend=False,
-        xaxis_title=info.get('unit', 'Price'),
-        yaxis_title="Frequency"
+        xaxis_title=info.get('unit', 'Quoted Price'),
+        yaxis_title="Observation Frequency"
     )
     st.plotly_chart(fig_hist, use_container_width=True, config={'displayModeBar': False})
 
-    # Contextual callout based on percentile position
-    if   pctile > 85: msg = f"Currently at the **{pctile:.0f}th percentile** — historically elevated. Above 85% of all observations since {df['date'].min().year}."
-    elif pctile < 15: msg = f"Currently at the **{pctile:.0f}th percentile** — historically low. Below 85% of all observations since {df['date'].min().year}."
-    else:             msg = f"Currently at the **{pctile:.0f}th percentile** — within normal historical range."
+    if   pctile > 85: msg = f"Observation flagged: Value is at the **{pctile:.0f}th percentile**, marking an elevated position above 85% of recorded history since {df['date'].min().year}."
+    elif pctile < 15: msg = f"Observation flagged: Value is at the **{pctile:.0f}th percentile**, marking a depressed position below 85% of recorded history since {df['date'].min().year}."
+    else:             msg = f"Normal Distribution Range: Currently at the **{pctile:.0f}th percentile**, well within expected standard deviation profiles."
+    
     st.markdown(
         f"<p style='font-family:IBM Plex Mono,monospace;font-size:0.82rem;"
         f"color:rgba(148, 163, 184, 1);padding:0.75rem 1rem;background:#141720;"
@@ -318,9 +411,12 @@ if len(selected) == 1:
         unsafe_allow_html=True
     )
 
-# ── Correlation matrix (two or more commodities selected) ────────────────────
+# ------------------------------------------------------------------ #
+# View: Multi-Asset Correlational Matrix                             #
+# ------------------------------------------------------------------ #
+
 if len(selected) >= 2:
-    st.markdown('<p class="section-title">Correlations</p>', unsafe_allow_html=True)
+    st.markdown('<p class="section-title">Pearson Correlation Architecture</p>', unsafe_allow_html=True)
 
     df_filled = df[selected].ffill()
     corr = df_filled.corr()
@@ -335,7 +431,7 @@ if len(selected) >= 2:
         text=np.round(corr.values, 2),
         texttemplate='%{text}',
         textfont=dict(size=9, family='IBM Plex Mono', color='rgba(148, 163, 184, 1)'),
-        hovertemplate='%{y} x %{x}<br>r = %{z:.3f}<extra></extra>',
+        hovertemplate='%{y} x %{x}<br>Coefficient (r) = %{z:.3f}<extra></extra>',
         colorbar=dict(
             tickfont=dict(size=8, family='IBM Plex Mono', color='#475569'),
             outlinecolor='#1e2330', thickness=10
@@ -348,16 +444,11 @@ if len(selected) >= 2:
         margin=dict(l=0, r=0, t=4, b=0),
     )
 
-    fig_corr.update_xaxes(
-        tickfont=dict(size=9, family='IBM Plex Mono', color='#64748b')
-    )
-
-    fig_corr.update_yaxes(
-        tickfont=dict(size=9, family='IBM Plex Mono', color='#64748b')
-    )
+    fig_corr.update_xaxes(tickfont=dict(size=9, family='IBM Plex Mono', color='#64748b'))
+    fig_corr.update_yaxes(tickfont=dict(size=9, family='IBM Plex Mono', color='#64748b'))
+    
     st.plotly_chart(fig_corr, use_container_width=True, config={'displayModeBar': False})
 
-    # Rank all unique pairs by absolute correlation
     pairs = []
     for i in range(len(selected)):
         for j in range(i + 1, len(selected)):
@@ -367,26 +458,29 @@ if len(selected) >= 2:
     if pairs:
         pc1, pc2 = st.columns(2)
         with pc1:
-            st.markdown('<p class="section-title" style="margin-top:0">Strongest Positive</p>',
+            st.markdown('<p class="section-title" style="margin-top:0">Primary Positive Correlation Base</p>',
                         unsafe_allow_html=True)
             for a, b, r in [p for p in pairs if p[2] > 0][:3]:
                 st.markdown(
                     f"<p style='font-family:IBM Plex Mono,monospace;font-size:0.8rem;color:rgba(148, 163, 184, 1);"
-                    f"margin:0.3rem 0'>{a} x {b} "
+                    f"margin:0.3rem 0'>{a} & {b} "
                     f"<span style='color:rgba(34, 197, 94, 1);font-weight:600'>{r:+.3f}</span></p>",
                     unsafe_allow_html=True)
         with pc2:
-            st.markdown('<p class="section-title" style="margin-top:0">Strongest Negative</p>',
+            st.markdown('<p class="section-title" style="margin-top:0">Primary Inverse Correlation Base</p>',
                         unsafe_allow_html=True)
             for a, b, r in [p for p in reversed(pairs) if p[2] < 0][:3]:
                 st.markdown(
                     f"<p style='font-family:IBM Plex Mono,monospace;font-size:0.8rem;color:rgba(148, 163, 184, 1);"
-                    f"margin:0.3rem 0'>{a} x {b} "
+                    f"margin:0.3rem 0'>{a} & {b} "
                     f"<span style='color:rgba(239, 68, 68, 1);font-weight:600'>{r:+.3f}</span></p>",
                     unsafe_allow_html=True)
 
-# ── Descriptive statistics table ──────────────────────────────────────────────
-st.markdown('<p class="section-title">Descriptive Statistics</p>', unsafe_allow_html=True)
+# ------------------------------------------------------------------ #
+# View: Aggregate Data Framework                                     #
+# ------------------------------------------------------------------ #
+
+st.markdown('<p class="section-title">Descriptive Data Summary</p>', unsafe_allow_html=True)
 
 stat_rows = []
 for c in selected:
@@ -395,14 +489,14 @@ for c in selected:
     cur    = latest[c]
     pctile = (df[c].dropna() < cur).mean() * 100
     stat_rows.append({
-        'Commodity': info.get('name', c.replace('_', ' ').title()),
+        'Asset Identifier': info.get('name', c.replace('_', ' ').title()),
         'Freq':      info.get('frequency', '—').title()[:3],
-        'Current':   round(cur, 2),
-        'Pctile':    round(pctile, 1),
-        'Mean':      round(series.mean(), 2),
-        'Std':       round(series.std(), 2),
-        'Min':       round(series.min(), 2),
-        'Max':       round(series.max(), 2),
+        'Current Value': round(cur, 2),
+        'Pctile Limit':  round(pctile, 1),
+        'Mean Avg':      round(series.mean(), 2),
+        'Volatility':    round(series.std(), 2),
+        'Min Low':       round(series.min(), 2),
+        'Max High':      round(series.max(), 2),
     })
 
 stats_df = pd.DataFrame(stat_rows)
@@ -414,9 +508,9 @@ def style_pctile(val):
 
 st.dataframe(
     stats_df.style
-        .map(style_pctile, subset=['Pctile'])
-        .format({'Current': '{:.2f}', 'Mean': '{:.2f}', 'Std': '{:.2f}',
-                 'Min': '{:.2f}', 'Max': '{:.2f}', 'Pctile': '{:.1f}%'}),
+        .map(style_pctile, subset=['Pctile Limit'])
+        .format({'Current Value': '{:.2f}', 'Mean Avg': '{:.2f}', 'Volatility': '{:.2f}',
+                 'Min Low': '{:.2f}', 'Max High': '{:.2f}', 'Pctile Limit': '{:.1f}%'}),
     hide_index=True,
     use_container_width=True
 )

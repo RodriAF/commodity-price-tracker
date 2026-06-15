@@ -1,0 +1,93 @@
+version: '3.8'
+
+services:
+  # ------------------------------------------------------------------
+  # PostgreSQL Backend Database
+  # ------------------------------------------------------------------
+  # Replaces SQLite to resolve "database is locked" concurrency issues.
+  # It securely reads core database credentials from the local .env file.
+  postgres-db:
+    image: postgres:15-alpine
+    container_name: commodity-postgres-db
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      # Double dollar signs ($$) escape the variables so they are evaluated 
+      # inside the container's shell, ensuring Postgres is ready before dependent services start.
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: always
+
+  # ------------------------------------------------------------------
+  # Local Prefect Server (Handles Scheduling, Internal Only)
+  # ------------------------------------------------------------------
+  prefect-server:
+    build: . 
+    container_name: commodity-prefect-server
+    command: ["prefect", "server", "start", "--host", "0.0.0.0"]
+    environment:
+      # Dynamically constructs the connection string using variables from the .env file.
+      # Uses the asyncpg driver required internally by Prefect's SQLAlchemy backend.
+      - PREFECT_API_DATABASE_CONNECTION_URL=postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres-db:5432/${POSTGRES_DB}
+    depends_on:
+      postgres-db:
+        condition: service_healthy
+    restart: always
+
+  # ------------------------------------------------------------------
+  # Pipeline Execution Worker
+  # ------------------------------------------------------------------
+  pipeline:
+    build: .  
+    container_name: commodity-pipeline
+    # Keeps the 10-second safety delay to allow the Prefect server to fully initialise.
+    command: >
+      sh -c "
+      echo 'Waiting 10 seconds for Prefect Server to boot...' &&
+      sleep 10 &&
+      python automation/flow.py
+      "
+    volumes:
+      - commodity-data:/app/data  
+    environment:
+      - PREFECT_API_URL=http://prefect-server:4200/api
+      - PREFECT_RUNNER_PROCESS_LIMIT=20
+    env_file:
+      - .env  
+    depends_on:
+      - prefect-server
+    restart: unless-stopped
+
+  # ------------------------------------------------------------------
+  # Analytical Streamlit Dashboard Interface
+  # ------------------------------------------------------------------
+  dashboard:
+    build: .  
+    container_name: commodity-dashboard
+    command: ["streamlit", "run", "dashboard/app.py"]
+    ports:
+      - "8501:8501"
+    volumes:
+      - commodity-data:/app/data:ro  
+    environment:
+      - STREAMLIT_SERVER_HEADLESS=true
+      - STREAMLIT_FOLDER_MONITOR=false 
+      - DATABASE_READ_ONLY=true
+    restart: always
+    depends_on:
+      - pipeline
+
+# ------------------------------------------------------------------
+# Central Volumes Matrix
+# ------------------------------------------------------------------
+volumes:
+  commodity-data:
+    name: commodity_shared_data  
+  postgres-data:
+    name: prefect_postgres_data

@@ -1,6 +1,7 @@
 """
 Agricultural Collector - Config-Based
 Reads configuration from a centralized JSON file.
+Includes robust retry mechanisms and frequency-aware imputation.
 """
 
 from fredapi import Fred
@@ -9,6 +10,7 @@ from datetime import datetime, timedelta
 import logging
 import sys
 import os
+from tenacity import retry, stop_after_attempt, wait_exponential
 
 # Include the parent directory in the path for utility imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
@@ -35,16 +37,32 @@ class AgriculturalCollector:
         self.commodities = ConfigLoader.get_commodities()
         self.frequency_config = ConfigLoader.get_frequency_config()
 
+        # Define forward fill limits based on the frequency
+        self.ffill_limits = {
+            'daily': 3,
+            'weekly': 2,
+            'monthly': 2,
+            'quarterly': 1
+        }
+
         logger.info("Agricultural Collector initialised")
         logger.info(f"  Commodities configured : {len(self.commodities)}")
         logger.info(f"  History window         : {days_history} days")
+
+    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
+    def _fetch_series_with_retry(self, series_id: str, start_date: str) -> pd.Series:
+        """
+        Fetch a series from FRED with exponential backoff retry.
+        Max 3 attempts.
+        """
+        return self.fred.get_series(series_id, observation_start=start_date)
 
     def collect(self) -> tuple:
         """
         Fetch all configured commodity series from the FRED API.
 
         Returns:
-            tuple: (DataFrame with merged series, dict with per-series metadata)
+            tuple: (Dict[str, DataFrame] with unmerged series, dict with per-series metadata)
         """
         logger.info("=" * 70)
         logger.info("DATA COLLECTION — AGRICULTURAL PRICES")
@@ -66,10 +84,10 @@ class AgriculturalCollector:
                 info = self.commodities[key]
 
                 try:
-                    # Request the series from the FRED API
-                    series = self.fred.get_series(
+                    # Request the series from the FRED API using the retry mechanism
+                    series = self._fetch_series_with_retry(
                         info['id'],
-                        observation_start=start_date.strftime('%Y-%m-%d')
+                        start_date.strftime('%Y-%m-%d')
                     )
 
                     df = pd.DataFrame({
@@ -77,18 +95,30 @@ class AgriculturalCollector:
                         key: series.values
                     })
 
-                    # Drop observations with missing values for this series
+                    freq = info['frequency']
+                    limit = self.ffill_limits.get(freq, 2) # Default fallback to 2
+
+                    # Detect missing values prior to imputation
+                    missing_mask = df[key].isna()
+
+                    # Apply forward fill with frequency-based limits
+                    df[key] = df[key].ffill(limit=limit)
+
+                    # Mark imputed values (True if it was originally NaN but is now filled)
+                    df['is_imputed'] = missing_mask & df[key].notna()
+
+                    # Drop observations that remain empty (could not be filled)
                     df = df.dropna(subset=[key])
 
                     if df.empty:
-                        logger.warning(f"    {info['name']}: no data returned")
+                        logger.warning(f"    {info['name']}: no data returned after dropping NaNs")
                         continue
 
+                    # Store the standalone dataframe
                     all_data[key] = df
 
                     # Build metadata entry, merging frequency-specific configuration
-                    freq = info['frequency']
-                    freq_config = self.frequency_config.get(freq, self.frequency_config['monthly'])
+                    freq_config = self.frequency_config.get(freq, self.frequency_config.get('monthly', {}))
 
                     metadata[key] = {
                         'name': info['name'],
@@ -96,10 +126,11 @@ class AgriculturalCollector:
                         'category': info['category'],
                         'frequency': freq,
                         'actual_data_points': len(df),
+                        'imputed_data_points': int(df['is_imputed'].sum()),
                         **freq_config
                     }
 
-                    logger.info(f"    {info['name']}: {len(df)} records ({freq})")
+                    logger.info(f"    {info['name']}: {len(df)} records ({freq}) - Imputed: {df['is_imputed'].sum()}")
 
                 except Exception as e:
                     logger.warning(f"    {info['name']}: collection failed — {e}")
@@ -107,28 +138,15 @@ class AgriculturalCollector:
 
         if not all_data:
             logger.error("Collection complete — no data returned for any series")
-            return pd.DataFrame(), {}
-
-        # Merge all series into a single DataFrame using an outer join on date
-        merged = None
-        for key, df in all_data.items():
-            if merged is None:
-                merged = df
-            else:
-                merged = pd.merge(merged, df, on='date', how='outer')
-
-        # Sort chronologically and forward-fill to handle mixed-frequency gaps
-        merged = merged.sort_values('date').reset_index(drop=True)
-        merged = merged.ffill()
+            return {}, {}
 
         logger.info("\n" + "=" * 70)
         logger.info("COLLECTION COMPLETE")
-        logger.info(f"  Records     : {len(merged)}")
-        logger.info(f"  Series      : {len(merged.columns) - 1}")
-        logger.info(f"  Date range  : {merged['date'].min()} — {merged['date'].max()}")
+        logger.info(f"  Series collected : {len(all_data)}")
         logger.info("=" * 70)
 
-        return merged, metadata
+        # Returns a Dictionary of DataFrames instead of a merged DataFrame
+        return all_data, metadata
 
     def get_categories(self):
         """Return commodities grouped by category."""
