@@ -32,7 +32,7 @@ ENV PATH="/opt/venv/bin:$PATH"
 
 # Explicitly copy source folders. Prevents exposure of raw host files like .git or Dockerfiles
 COPY --chown=appuser:appuser ./automation ./automation
-COPY --chown=appuser:appuser ./dashboard ./dashboard
+COPY --chown=appuser:appuser ./backend ./backend
 COPY --chown=appuser:appuser ./pipeline ./pipeline
 COPY --chown=appuser:appuser ./utils ./utils
 COPY --chown=appuser:appuser ./collectors ./collectors
@@ -45,8 +45,8 @@ RUN mkdir -p /app/data && chown -R appuser:appuser /app/data
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 
-# Expose Streamlit's structural port (or 8000 later for FastAPI)
-EXPOSE 8501
+# Expose FastAPI's port
+EXPOSE 8000
 
 # Drop privileges down to the non-root system user
 USER appuser

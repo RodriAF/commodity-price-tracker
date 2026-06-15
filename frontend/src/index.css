@@ -1,0 +1,45 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  @apply bg-canvas text-body font-sans antialiased;
+}
+
+/* Section title — mirrors .section-title from the Streamlit CSS */
+.section-title {
+  @apply font-mono text-[0.72rem] text-faint uppercase tracking-[0.12em]
+    border-b border-border pb-2 mt-8 mb-4;
+}
+
+/* Page header */
+.page-title {
+  @apply font-mono text-[1.1rem] font-semibold text-muted uppercase tracking-[0.12em];
+}
+.page-subtitle {
+  @apply text-2xl font-semibold text-heading mt-1;
+}
+
+/* Generic dark card */
+.card {
+  @apply bg-panel border border-border rounded-lg p-4;
+}
+
+/* Scrollbar — keep it subtle on dark backgrounds */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #1e2330;
+  border-radius: 4px;
+}
