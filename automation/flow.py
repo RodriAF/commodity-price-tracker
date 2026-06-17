@@ -34,7 +34,7 @@ from pipeline.calculations import CommoditiesAnalytics, CorrelationAnalysis
 from pipeline.predictions import CommoditiesForecaster
 from pipeline.validation import validate
 
-from utils.db import log_run, upsert_signals, upsert_forecasts
+from utils.db import log_run, upsert_signals, upsert_forecasts, initialize, check_if_schema_exists
 from automation.alerts import send_alert
 from config.settings import get_settings
 
@@ -438,6 +438,15 @@ def commodity_tracker_daily():
     logger.info("COMMODITY TRACKER PIPELINE INITIALIZED")
     logger.info(f"Execution Context ID: {run_id}")
     logger.info("=" * 70)
+
+    # SMART SCHEMA CHECK:
+    # If the core tables do not exist, initialize the full DuckDB schema.
+    # Otherwise, skip initialization to preserve resources and proceed immediately.
+    if not check_if_schema_exists():
+        logger.info("Database is empty. Initializing database schema for the first time...")
+        initialize()
+    else:
+        logger.info("Database schema detected. Skipping initialization.")
 
     log_run(run_id=run_id, started_at=start_time, status='RUNNING')
 

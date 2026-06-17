@@ -293,3 +293,21 @@ def load_prices(commodity: Optional[str] = None,
         df = conn.execute(query, params).df()
         
     return df
+
+def check_if_schema_exists() -> bool:
+    """
+    Check if the primary 'pipeline_runs' table already exists in the database.
+
+    Returns:
+        True if the schema is initialized, False otherwise.
+    """
+    with get_connection() as conn:
+        # Query DuckDB's internal information schema to verify table existence
+        result = conn.execute("""
+            SELECT EXISTS (
+                SELECT 1 
+                FROM information_schema.tables 
+                WHERE table_name = 'pipeline_runs'
+            )
+        """).fetchone()
+        return result[0] if result else False
