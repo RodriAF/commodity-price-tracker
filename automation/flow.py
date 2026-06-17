@@ -515,7 +515,7 @@ if __name__ == "__main__":
         name="daily-commodity-etl-deployment",
         
         # Prefect 2.x/3.x takes the interval or cron directly
-        interval=timedelta(seconds=90), 
+        interval=timedelta(seconds=360), 
         
         # If you wanted to use cron instead, it would look like this:
         # cron="0 1 * * *",
