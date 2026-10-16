@@ -1,5 +1,13 @@
 # 🌾 Agricultural Commodity Price Tracker
 
+![Python](https://img.shields.io/badge/Python-3.11-3776AB?style=flat-square&logo=python&logoColor=white)
+![FastAPI](https://img.shields.io/badge/FastAPI-REST_API-009688?style=flat-square&logo=fastapi&logoColor=white)
+![Prefect](https://img.shields.io/badge/Prefect-Workflow_Orchestration-024DFD?style=flat-square&logo=prefect&logoColor=white)
+![DuckDB](https://img.shields.io/badge/DuckDB-Analytics-FFF000?style=flat-square&logo=duckdb&logoColor=black)
+![scikit--learn](https://img.shields.io/badge/scikit--learn-Machine_Learning-F7931E?style=flat-square&logo=scikitlearn&logoColor=white)
+![Docker](https://img.shields.io/badge/Docker-Compose-2496ED?style=flat-square&logo=docker&logoColor=white)
+![MIT License](https://img.shields.io/badge/License-MIT-yellow?style=flat-square)
+
 > **End-to-end automated pipeline for commodity price monitoring, statistical signal detection, multi-model forecasting, and real-time dashboard delivery.**
 
 A production-grade data engineering and AI solution that ingests 22+ commodity series from the Federal Reserve (FRED API), runs daily through an orchestrated pipeline, computes actionable trading signals, generates multi-horizon price forecasts using an ensemble of statistical and ML models, and exposes the results through a REST API consumed by an interactive dashboard.
