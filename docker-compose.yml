@@ -84,6 +84,8 @@ services:
       - commodity-data:/app/data:ro
     environment:
       - DATABASE_READ_ONLY=true
+    env_file:
+      - .env
     restart: always
     depends_on:
       - pipeline
