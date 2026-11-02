@@ -32,6 +32,7 @@ import sys
 import os
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+from utils.alignment import align_wide_frame
 from utils.config_loader import ConfigLoader
 from config.settings import get_settings
 
@@ -49,7 +50,12 @@ class CommoditiesAnalytics:
         # The date column is re-attached by the caller after calculate_all() returns,
         # using the original df date values. This prevents NaN injection into ratio
         # calculations when the page layer passes a wide df that includes a date col.
-        self.df = df.drop(columns=["date"], errors="ignore").copy()
+        #
+        # Storage holds only real observations, so a monthly series is NaN on
+        # the business days of a daily one. Ratios, cost indices and z-scores
+        # compare series against each other, so they are aligned here — in
+        # memory, explicitly — by carrying the last known value forward.
+        self.df = align_wide_frame(df.drop(columns=["date"], errors="ignore"))
         self.categories = ConfigLoader.get_categories()
         logger.info("CommoditiesAnalytics initialised")
 
@@ -159,7 +165,7 @@ class CommoditiesAnalytics:
     # Z-Score Signals                                                    #
     # ------------------------------------------------------------------ #
 
-    def calculate_zscores(self, df: pd.DataFrame) -> pd.DataFrame:
+    def calculate_zscores(self, df: pd.DataFrame, window: int | None = None) -> pd.DataFrame:
         """
         Compute rolling z-scores for every column in the input DataFrame.
 
@@ -196,11 +202,13 @@ class CommoditiesAnalytics:
 
             freq          = ConfigLoader.get_commodity_frequency(base_name)
             metric_config = ConfigLoader.get_metric_config(freq)
-            window        = metric_config.get('z_window', 60) if metric_config else 60
-            min_p         = max(3, window // 4)
+            col_window    = window if window is not None else (
+                metric_config.get('z_window', 60) if metric_config else 60
+            )
+            min_p         = max(3, col_window // 4)
 
-            mean = df[col].rolling(window, min_periods=min_p).mean()
-            std  = df[col].rolling(window, min_periods=min_p).std()
+            mean = df[col].rolling(col_window, min_periods=min_p).mean()
+            std  = df[col].rolling(col_window, min_periods=min_p).std()
             zscores[f"{col}_zscore"] = (df[col] - mean) / (std + 1e-8)
 
         return zscores
@@ -350,7 +358,8 @@ class CorrelationAnalysis:
     """
 
     def __init__(self, df: pd.DataFrame):
-        self.df = df.copy()
+        # Correlations compare series observed on different calendars: align first.
+        self.df = align_wide_frame(df)
 
     def key_correlations(self) -> pd.DataFrame:
         """

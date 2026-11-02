@@ -1,4 +1,5 @@
 import { fmtNumber, fmtPercent, changeColorClass } from '../utils/format'
+import { useLanguage } from '../i18n/LanguageContext'
 
 // Maps category keys to the Tailwind accent colors defined in tailwind.config.js
 const CATEGORY_ACCENT = {
@@ -16,6 +17,7 @@ const CATEGORY_ACCENT = {
  * grouped by commodity category.
  */
 export default function CategoryCard({ categoryKey, label, commodities }) {
+  const { t, tDyn } = useLanguage()
   const accent = CATEGORY_ACCENT[categoryKey] || 'border-t-cat-economic text-cat-economic'
   const [borderClass, textClass] = accent.split(' ')
 
@@ -29,9 +31,12 @@ export default function CategoryCard({ categoryKey, label, commodities }) {
         {commodities.map((c) => (
           <div
             key={c.key}
+            title={c.as_of ? t('overview.lastObs', { date: c.as_of }) : undefined}
             className="flex items-center justify-between py-1 border-b border-border-soft last:border-b-0"
           >
-            <span className="text-[0.78rem] text-muted flex-1 truncate pr-2">{c.name}</span>
+            <span className="text-[0.78rem] text-muted flex-1 truncate pr-2" title={tDyn(c.name)}>
+              {tDyn(c.name)}
+            </span>
             <span className="font-mono text-[0.82rem] font-semibold text-heading text-right min-w-[64px]">
               {c.price !== null ? fmtNumber(c.price) : '—'}
             </span>

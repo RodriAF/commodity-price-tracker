@@ -18,7 +18,7 @@ import logging
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, date
-from typing import Tuple, Dict, Any, List
+from typing import Tuple, Dict, Any, List, Optional
 
 import numpy as np
 import pandas as pd
@@ -29,7 +29,7 @@ from prefect.context import get_run_context
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from collectors.agricultural_collector import AgriculturalCollector
-from pipeline.data_pipeline import DataPipeline
+from pipeline.data_pipeline import DataPipeline, IMPUTED_SUFFIX
 from pipeline.calculations import CommoditiesAnalytics, CorrelationAnalysis
 from pipeline.predictions import CommoditiesForecaster
 from pipeline.validation import validate
@@ -56,10 +56,13 @@ def make_serializable(obj: Any) -> Any:
         return {k: make_serializable(v) for k, v in obj.items()}
     elif isinstance(obj, list):
         return [make_serializable(item) for item in obj]
-    elif isinstance(obj, (np.integer, np.floating)):
-        return float(obj)
+    elif isinstance(obj, (np.integer, np.floating, float)):
+        value = float(obj)
+        return value if np.isfinite(value) else None   # NaN/Inf are not valid JSON
     elif isinstance(obj, np.ndarray):
-        return obj.tolist()
+        return make_serializable(obj.tolist())
+    elif isinstance(obj, tuple):
+        return [make_serializable(item) for item in obj]
     return obj
 
 
@@ -99,20 +102,32 @@ def _series_dict_to_wide(series_dict: Dict[str, pd.DataFrame]) -> pd.DataFrame:
     """
     Converts the validated series dict back to a wide DataFrame.
 
-    Input:  {commodity: DataFrame(index=DatetimeIndex, columns=['value', ...])}
-    Output: DataFrame(columns=['date', 'corn', 'wheat', ...])
+    Input:  {commodity: DataFrame(index=DatetimeIndex, columns=['value', 'is_imputed'?])}
+    Output: DataFrame(columns=['date', 'corn', 'wheat', ..., 'corn__imputed', ...])
+
+    The outer join leaves NaN wherever a series has no observation on a date
+    (a monthly price on a business day, say). Those gaps are NOT filled here or
+    later: storage keeps only real observations. The optional
+    ``<commodity>__imputed`` columns carry the collector's own gap-fill flags
+    through to the database.
     """
     if not series_dict:
         return pd.DataFrame(columns=['date'])
 
     frames = []
     for commodity, sub in series_dict.items():
-        s = sub['value'].rename(commodity)
-        frames.append(s)
+        frames.append(sub['value'].rename(commodity))
+        if 'is_imputed' in sub.columns:
+            frames.append(sub['is_imputed'].astype('boolean').rename(f'{commodity}{IMPUTED_SUFFIX}'))
 
     wide = pd.concat(frames, axis=1)
-    wide = wide.reset_index().rename(columns={'index': 'date', 'date': 'date'})
+    wide.index.name = 'date'
+    wide = wide.reset_index()
     wide = wide.sort_values('date').reset_index(drop=True)
+
+    flag_cols = [c for c in wide.columns if c.endswith(IMPUTED_SUFFIX)]
+    if flag_cols:
+        wide[flag_cols] = wide[flag_cols].fillna(False).astype(bool)
     return wide
 
 
@@ -143,16 +158,20 @@ def _signals_to_db_df(signals: List[Dict], run_date: date) -> pd.DataFrame:
     return df[columns]
 
 
-# Confidence labels are categorical in predictions.py but the `forecasts`
-# table stores `confidence` as DOUBLE. We map to a numeric score and keep
-# the original label inside metrics_json for full traceability.
-_CONFIDENCE_SCORE = {'high': 1.0, 'medium': 0.5, 'low': 0.0}
+# Keys of a model result that are bulky/transient and must not be persisted.
+_NOT_PERSISTED = {'predictions', 'trace', 'backtest', 'error', 'confidence', 'metrics'}
 
 
 def _forecasts_to_db_df(all_forecasts: Dict[str, Any], run_date: date) -> pd.DataFrame:
     """
     Flatten the nested forecast results (per commodity -> per model + ensemble)
     into the row-based schema of db.forecasts.
+
+    * ``model`` holds a STABLE key ('arima', 'theta', 'ensemble', ...). The
+      human-readable label (which can embed fitted orders) lives in metrics_json.
+    * ``confidence`` is stored as its text label (high / medium / low).
+    * metrics_json carries every metric of the model plus, for the ensemble,
+      prediction intervals, weights, the naive baseline and series metadata.
     """
     columns = ['run_date', 'commodity', 'model', 'horizon',
                'predictions_json', 'metrics_json', 'confidence']
@@ -165,36 +184,35 @@ def _forecasts_to_db_df(all_forecasts: Dict[str, Any], run_date: date) -> pd.Dat
             if 'predictions' not in result:
                 continue
 
-            raw_confidence = result.get('confidence', 'low')
-            numeric_confidence = _CONFIDENCE_SCORE.get(raw_confidence, 0.0)
-
+            metrics = {
+                **{k: v for k, v in result.items() if k not in _NOT_PERSISTED},
+                **(result.get('metrics') or {}),
+            }
             rows.append({
                 'run_date': run_date,
                 'commodity': commodity,
-                'model': result.get('method', model_key),
+                'model': model_key,
                 'horizon': horizon,
                 'predictions_json': json.dumps(result.get('predictions')),
-                'metrics_json': json.dumps(result.get('metrics', {})),
-                'confidence': numeric_confidence,
+                'metrics_json': json.dumps(make_serializable(metrics)),
+                'confidence': result.get('confidence', 'low'),
             })
 
         ensemble = data.get('ensemble')
         if ensemble:
             metrics = {
-                'avg_mape': ensemble.get('avg_mape'),
-                'top_models': ensemble.get('top_models'),
+                **{k: v for k, v in ensemble.items() if k not in _NOT_PERSISTED},
+                **(ensemble.get('metrics') or {}),
+                'meta': data.get('meta', {}),
             }
-
-            raw_ens_confidence = ensemble.get('confidence', 'low')
-            numeric_ens_confidence = _CONFIDENCE_SCORE.get(raw_ens_confidence, 0.0)
             rows.append({
                 'run_date': run_date,
                 'commodity': commodity,
                 'model': 'ensemble',
                 'horizon': horizon,
                 'predictions_json': json.dumps(ensemble.get('predictions')),
-                'metrics_json': json.dumps(metrics),
-                'confidence': numeric_ens_confidence,
+                'metrics_json': json.dumps(make_serializable(metrics)),
+                'confidence': ensemble.get('confidence', 'low'),
             })
 
     return pd.DataFrame(rows, columns=columns)
@@ -308,10 +326,15 @@ def analytics(full_data: pd.DataFrame, run_date: date) -> Dict[str, Any]:
 
 
 @task(retries=2)
-def forecast_one(commodity: str, full_data: pd.DataFrame, frequency: str, horizon: int = 3) -> Tuple[str, Dict[str, Any]]:
+def forecast_one(commodity: str, full_data: pd.DataFrame, frequency: str,
+                 horizon: Optional[int] = None) -> Tuple[str, Dict[str, Any]]:
     """
-    Runs the full forecasting suite for a single commodity. Designed to be
-    mapped across commodities so failures and slow models are isolated.
+    Runs the full forecasting suite for a single commodity on its NATIVE
+    observation calendar. Designed to be mapped across commodities so failures
+    and slow models are isolated.
+
+    ``horizon=None`` uses the per-frequency number of steps from commodities.json
+    (daily 20, weekly 12, monthly 6, quarterly 4 by default).
     """
     logger = get_logger()
 
@@ -329,23 +352,48 @@ def forecast_one(commodity: str, full_data: pd.DataFrame, frequency: str, horizo
         logger.warning(f"Forecast Error [{commodity}]: {results['error']}")
         return commodity, {}
 
+    for key, res in results.items():
+        if 'error' in res:
+            logger.info(f"Model skipped [{commodity}/{key}]: {res['error']}")
+
     ensemble = forecaster.create_ensemble(results)
-    current_price = float(full_data[commodity].iloc[-1])
+
+    # Price the forecast is measured against: the LAST REAL observation of this
+    # commodity (the wide frame is sparse, so iloc[-1] could be NaN).
+    current_price = float(forecaster.native.iloc[-1])
+
+    meta = {
+        'last_observation_date': forecaster.last_observation_date.strftime('%Y-%m-%d'),
+        'future_dates':          forecaster.future_dates(),
+        'n_obs':                 int(len(forecaster.native)),
+        'n_gap_filled':          int(forecaster.n_gap_filled),
+        'frequency':             frequency,
+        'log_space':             bool(forecaster.use_log),
+    }
 
     payload = make_serializable({
         'current_price': current_price,
         'frequency': frequency,
-        'horizon': horizon,
+        'horizon': forecaster.horizon,
+        'meta': meta,
         'individual_models': results,
         'ensemble': ensemble if ensemble else None,
     })
 
+    # Fold-by-fold arrays were only needed to build the ensemble backtest.
+    for res in payload['individual_models'].values():
+        res.pop('backtest', None)
+
     if ensemble and 'predictions' in ensemble:
         pred_p1 = ensemble['predictions'][0]
         pct_change = (pred_p1 - current_price) / current_price * 100
+        skill = (ensemble.get('metrics') or {}).get('skill_vs_naive')
+        skill_txt = f"{skill * 100:+.0f}%" if skill is not None else "n/a"
         logger.info(
-            f"Forecast {commodity:<15} | Current: ${current_price:7.2f} | "
-            f"T+1: ${pred_p1:7.2f} ({pct_change:+6.2f}%)"
+            f"Forecast {commodity:<15} | Current: {current_price:9.2f} | "
+            f"T+1: {pred_p1:9.2f} ({pct_change:+6.2f}%) | "
+            f"horizon={forecaster.horizon} | skill vs naive: {skill_txt} | "
+            f"confidence: {ensemble.get('confidence')}"
         )
 
     return commodity, payload
@@ -365,7 +413,10 @@ def forecasting(full_data: pd.DataFrame, metadata: Dict, run_date: date) -> Dict
         'crude_oil', 'natural_gas', 'diesel', 'gasoline',
         'urea', 'dap_fertilizer', 'phosphate', 'potash'
     ]
-    active_targets = [c for c in key_commodities if c in full_data.columns]
+    active_targets = [
+        c for c in key_commodities
+        if c in full_data.columns and full_data[c].notna().any()
+    ]
 
     all_forecasts: Dict[str, Any] = {}
 

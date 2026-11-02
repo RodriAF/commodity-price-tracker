@@ -109,21 +109,33 @@ class TestClean:
             "DataFrame must be sorted ascending by date after clean()"
         )
 
-    def test_no_negative_prices_after_ffill(self):
+    def test_clean_does_not_fabricate_values_for_gaps(self):
         """
-        FRED occasionally has gaps (NaN) for commodities with irregular
-        reporting. ffill() propagates the last known value, which is always
-        non-negative for prices. If a negative price slips through, log-return
-        calculations in the forecaster produce NaN or complex numbers.
+        Storage keeps ONLY real observations. A NaN produced by the outer join of
+        series with different calendars means "no observation on this date", not
+        "price unchanged". If clean() forward-filled it, a monthly price would be
+        stored once per business day and every downstream change %, statistic and
+        forecast would be computed on repeated values.
         """
         df = make_monthly_df(n=24)
-        df.loc[5:10, 'corn'] = np.nan  # simulate gap
+        df.loc[5:10, 'corn'] = np.nan  # simulate dates without an observation
+        pipeline = DataPipeline.__new__(DataPipeline)
+        result = pipeline.clean(df)
+        assert result['corn'].isna().sum() == df['corn'].isna().sum(), (
+            "clean() must leave missing observations missing"
+        )
+
+    def test_no_negative_prices_among_real_observations(self):
+        """
+        If a negative price slips through, log-return calculations in the
+        forecaster produce NaN. NaN gaps are allowed; negative values are not.
+        """
+        df = make_monthly_df(n=24)
+        df.loc[5:10, 'corn'] = np.nan
         pipeline = DataPipeline.__new__(DataPipeline)
         result = pipeline.clean(df)
         numeric = result.select_dtypes(include='number')
-        assert (numeric >= 0).all().all(), (
-            "No negative values should remain after ffill"
-        )
+        assert (numeric.dropna() >= 0).all().all(), "No negative values may remain"
 
 
 # 2. calculate_metrics()

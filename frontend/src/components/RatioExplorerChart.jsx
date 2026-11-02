@@ -10,6 +10,7 @@ import {
   YAxis,
 } from 'recharts'
 import { fmtDate } from '../utils/format'
+import { useLanguage } from '../i18n/LanguageContext'
 
 const CHART_GRID = '#1e2330'
 const CHART_AXIS = '#475569'
@@ -19,7 +20,8 @@ const CHART_AXIS = '#475569'
  * +/-2σ bands — replicates the `go.Figure` + `add_hrect` ratio explorer on
  * the Input Cost Analytics page.
  */
-export default function RatioExplorerChart({ dates, values, mean, std, height = 300 }) {
+export default function RatioExplorerChart({ dates, values, mean, std, height = 320 }) {
+  const { t } = useLanguage()
   const data = dates.map((date, i) => ({ date, value: values[i] }))
   const numericValues = values.filter((v) => v !== null && v !== undefined)
 
@@ -28,7 +30,7 @@ export default function RatioExplorerChart({ dates, values, mean, std, height = 
 
   return (
     <ResponsiveContainer width="100%" height={height}>
-      <ComposedChart data={data} margin={{ top: 8, right: 12, bottom: 0, left: 0 }}>
+      <ComposedChart data={data} margin={{ top: 8, right: 20, bottom: 4, left: 0 }}>
         <CartesianGrid stroke={CHART_GRID} vertical={false} />
         <XAxis
           dataKey="date"
@@ -42,13 +44,13 @@ export default function RatioExplorerChart({ dates, values, mean, std, height = 
           tick={{ fill: CHART_AXIS, fontSize: 9, fontFamily: 'IBM Plex Mono' }}
           axisLine={{ stroke: CHART_GRID }}
           tickLine={{ stroke: CHART_GRID }}
-          width={48}
+          width={64}
           domain={
             band2
               ? [Math.min(band2[0], ...numericValues), Math.max(band2[1], ...numericValues)]
               : ['auto', 'auto']
           }
-          label={{ value: 'Ratio (trend only)', angle: -90, position: 'insideLeft', fill: CHART_AXIS, fontSize: 10 }}
+          label={{ value: t('ratios.ratioAxis'), angle: -90, position: 'insideLeft', fill: CHART_AXIS, fontSize: 10 }}
         />
         <Tooltip
           contentStyle={{ backgroundColor: '#141720', border: '1px solid #1e2330', borderRadius: 6, fontSize: 11, fontFamily: 'IBM Plex Mono' }}
@@ -64,6 +66,7 @@ export default function RatioExplorerChart({ dates, values, mean, std, height = 
             fillOpacity={0.03}
             isAnimationActive={false}
             legendType="none"
+            tooltipType="none"
           />
         )}
         {band1 && (
@@ -74,6 +77,7 @@ export default function RatioExplorerChart({ dates, values, mean, std, height = 
             fillOpacity={0.05}
             isAnimationActive={false}
             legendType="none"
+            tooltipType="none"
           />
         )}
 
@@ -83,14 +87,14 @@ export default function RatioExplorerChart({ dates, values, mean, std, height = 
             stroke="#475569"
             strokeDasharray="5 3"
             strokeWidth={1.5}
-            label={{ value: `Mean ${mean.toFixed(3)}`, position: 'insideTopRight', fill: '#64748b', fontSize: 9, fontFamily: 'IBM Plex Mono' }}
+            label={{ value: `${t('ratios.mean')} ${mean.toFixed(3)}`, position: 'insideTopRight', fill: '#64748b', fontSize: 9, fontFamily: 'IBM Plex Mono' }}
           />
         )}
 
         <Line
           type="monotone"
           dataKey="value"
-          name="Ratio"
+          name={t('ratios.ratioSeries')}
           stroke="rgba(56,189,248,1)"
           strokeWidth={2}
           dot={false}

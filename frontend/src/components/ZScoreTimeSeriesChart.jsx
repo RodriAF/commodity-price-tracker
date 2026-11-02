@@ -1,8 +1,12 @@
 import { Bar, BarChart, CartesianGrid, Cell, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { fmtDate, fmtZScore } from '../utils/format'
+import { useLanguage } from '../i18n/LanguageContext'
 
 const CHART_GRID = '#1e2330'
 const CHART_AXIS = '#475569'
+
+// Keep the ±1 / ±2 threshold lines visible even when every z-score is small.
+const Z_DOMAIN = [(min) => Math.min(-2.5, Math.floor(min)), (max) => Math.max(2.5, Math.ceil(max))]
 
 function barColor(z) {
   const abs = Math.abs(z)
@@ -16,12 +20,13 @@ function barColor(z) {
  * on the Analysis page for a single selected asset, with dotted reference
  * bands at +/-1 and +/-2 standard deviations.
  */
-export default function ZScoreTimeSeriesChart({ dates, values, height = 180 }) {
+export default function ZScoreTimeSeriesChart({ dates, values, height = 200 }) {
+  const { t } = useLanguage()
   const data = dates.map((date, i) => ({ date, z: values[i] }))
 
   return (
     <ResponsiveContainer width="100%" height={height}>
-      <BarChart data={data} margin={{ top: 4, right: 12, bottom: 0, left: 0 }}>
+      <BarChart data={data} margin={{ top: 4, right: 20, bottom: 4, left: 0 }}>
         <CartesianGrid stroke={CHART_GRID} vertical={false} />
         <XAxis
           dataKey="date"
@@ -35,8 +40,9 @@ export default function ZScoreTimeSeriesChart({ dates, values, height = 180 }) {
           tick={{ fill: CHART_AXIS, fontSize: 9, fontFamily: 'IBM Plex Mono' }}
           axisLine={{ stroke: CHART_GRID }}
           tickLine={{ stroke: CHART_GRID }}
-          width={40}
-          label={{ value: 'Standard Dev (σ)', angle: -90, position: 'insideLeft', fill: CHART_AXIS, fontSize: 10 }}
+          width={52}
+          domain={Z_DOMAIN}
+          label={{ value: t('chart.stdDev'), angle: -90, position: 'insideLeft', fill: CHART_AXIS, fontSize: 10 }}
         />
         <Tooltip
           contentStyle={{ backgroundColor: '#141720', border: '1px solid #1e2330', borderRadius: 6, fontSize: 11, fontFamily: 'IBM Plex Mono' }}

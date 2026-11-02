@@ -1,4 +1,5 @@
 import { fmtZScore } from '../utils/format'
+import { useLanguage } from '../i18n/LanguageContext'
 
 const LEVEL_BORDER = {
   extreme: 'border-l-neg',
@@ -15,9 +16,9 @@ const TAG_STYLE = {
   undervalued: 'bg-[#2e1c1c] text-[#f87171]',
 }
 
-const TAG_LABEL = {
-  overvalued: 'ABOVE NORM',
-  undervalued: 'BELOW NORM',
+const TAG_LABEL_KEY = {
+  overvalued: 'signals.above',
+  undervalued: 'signals.below',
 }
 
 /**
@@ -25,10 +26,12 @@ const TAG_LABEL = {
  * Overview page, split into two columns on larger screens.
  */
 export default function SignalsPanel({ signals }) {
+  const { t, tDyn } = useLanguage()
+
   if (!signals || signals.length === 0) {
     return (
       <div className="card text-subtle font-mono text-[0.85rem]">
-        No anomalous signals detected — all commodities within standard statistical bounds.
+        {t('signals.empty')}
       </div>
     )
   }
@@ -47,9 +50,9 @@ export default function SignalsPanel({ signals }) {
                 LEVEL_BORDER[s.level] || 'border-l-transparent'
               }`}
             >
-              <span className="font-mono text-[0.82rem] text-body flex-1">{s.name}</span>
+              <span className="font-mono text-[0.82rem] text-body flex-1">{tDyn(s.name)}</span>
               <span className={`text-[0.68rem] px-2 py-0.5 rounded uppercase tracking-wide ${TAG_STYLE[s.type]}`}>
-                {TAG_LABEL[s.type]}
+                {t(TAG_LABEL_KEY[s.type])}
               </span>
               <span className={`font-mono text-[0.82rem] font-semibold min-w-[60px] text-right ${LEVEL_TEXT[s.level]}`}>
                 {fmtZScore(s.z_score)}

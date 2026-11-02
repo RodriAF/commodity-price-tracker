@@ -85,12 +85,21 @@ def get_analysis(
     if range not in RANGE_DAYS:
         raise HTTPException(status_code=400, detail=f"'range' must be one of {list(RANGE_DAYS)}")
 
+    # Real observations only (sparse). The aligned frame `df` is right for
+    # chart lines and correlations, but percentiles, descriptive statistics and
+    # the histogram must be computed on actual observations: on the aligned
+    # frame a monthly price would be counted once per business day.
+    raw = price_service.load_wide_prices(aligned=False)
+
     cutoff_days = RANGE_DAYS[range]
     last_date = df["date"].max()
     if cutoff_days is not None:
-        df_view = df[df["date"] >= last_date - pd.Timedelta(days=cutoff_days)].copy()
+        window_start = last_date - pd.Timedelta(days=cutoff_days)
+        df_view = df[df["date"] >= window_start].copy()
+        raw_view = raw[raw["date"] >= window_start]
     else:
         df_view = df.copy()
+        raw_view = raw
     df_view = df_view.reset_index(drop=True)
 
     # ------------------------------------------------------------ #
@@ -131,7 +140,7 @@ def get_analysis(
         current[c] = {
             "value": cur_val,
             "zscore": z_val,
-            "percentile": price_service.percentile_of(df[c], cur_val),
+            "percentile": price_service.percentile_of(raw[c], cur_val),
         }
 
     response: dict = {
@@ -163,7 +172,7 @@ def get_analysis(
     stats = []
     for c in selected:
         info = ConfigLoader.get_commodity_info(c)
-        s = df_view[c].dropna()
+        s = raw_view[c].dropna()
         stats.append(
             {
                 "key": c,
@@ -184,7 +193,7 @@ def get_analysis(
     # ------------------------------------------------------------ #
     if len(selected) == 1:
         c = selected[0]
-        full_series = df[c].dropna()
+        full_series = raw[c].dropna()
         cur_val = current[c]["value"]
         response["histogram"] = {
             "key": c,

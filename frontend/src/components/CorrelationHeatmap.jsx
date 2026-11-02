@@ -29,14 +29,14 @@ export default function CorrelationHeatmap({ labels, matrix }) {
     <div className="overflow-x-auto">
       <div
         className="inline-grid gap-[2px]"
-        style={{ gridTemplateColumns: `120px repeat(${n}, minmax(64px, 1fr))` }}
+        style={{ gridTemplateColumns: `minmax(110px, 150px) repeat(${n}, minmax(72px, 1fr))` }}
       >
         {/* Header row */}
         <div />
         {labels.map((label) => (
           <div
             key={`col-${label}`}
-            className="font-mono text-[9px] text-subtle text-center px-1 py-2 truncate"
+            className="font-mono text-[9px] leading-tight text-subtle text-center px-1 py-2 break-words flex items-end justify-center"
             title={label}
           >
             {label}
@@ -47,7 +47,7 @@ export default function CorrelationHeatmap({ labels, matrix }) {
         {labels.map((rowLabel, i) => (
           <Fragment key={`row-${rowLabel}`}>
             <div
-              className="font-mono text-[9px] text-subtle flex items-center px-2 truncate"
+              className="font-mono text-[9px] leading-tight text-subtle flex items-center px-2 break-words"
               title={rowLabel}
             >
               {rowLabel}

@@ -15,13 +15,28 @@ from typing import Optional
 import pandas as pd
 
 import utils.db as db
+from utils.alignment import align_wide_frame
 from utils.config_loader import ConfigLoader
 
 
-def load_wide_prices() -> pd.DataFrame:
+def load_wide_prices(aligned: bool = True) -> pd.DataFrame:
     """
     Load all historical prices from DuckDB and pivot into a wide
     DataFrame: one ``date`` column plus one column per commodity.
+
+    The database stores ONLY real observations, so the raw pivot is sparse: a
+    monthly commodity has a value on one row per month and NaN on the other
+    rows of the shared calendar.
+
+    ``aligned=True`` (default) forward-fills that frame so every commodity has a
+    value on every date. Use it for charts, ratios and correlations, which need
+    series on a common calendar.
+
+    ``aligned=False`` returns the raw, sparse frame. Use it whenever the
+    distinction matters: the last observation date, the change between the last
+    two REAL observations, percentiles, statistics and forecasts. (On an
+    aligned frame the last two values of a monthly series are identical, so
+    the "change" is always 0%.)
 
     Returns an empty DataFrame if the ``prices`` table has no rows yet
     (e.g. the pipeline has never run).
@@ -33,7 +48,44 @@ def load_wide_prices() -> pd.DataFrame:
     df_wide = df_long.pivot(index="date", columns="commodity", values="value").reset_index()
     df_wide.columns.name = None
     df_wide["date"] = pd.to_datetime(df_wide["date"])
-    return df_wide.sort_values("date").reset_index(drop=True)
+    df_wide = df_wide.sort_values("date").reset_index(drop=True)
+    return align_wide_frame(df_wide) if aligned else df_wide
+
+
+def last_observation_date(df_raw: pd.DataFrame, col: str) -> Optional[str]:
+    """ISO date of the last REAL observation of ``col`` in a raw (sparse) frame."""
+    if col not in df_raw.columns:
+        return None
+    s = df_raw.loc[df_raw[col].notna(), "date"]
+    return s.iloc[-1].strftime("%Y-%m-%d") if not s.empty else None
+
+
+def _iso_utc(value) -> Optional[str]:
+    """Timestamps are written by the pipeline with ``datetime.now()`` in a UTC container."""
+    if value is None or pd.isna(value):
+        return None
+    return pd.Timestamp(value).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def load_pipeline_status() -> Optional[dict]:
+    """
+    When the flow last ran, as opposed to how fresh the data is.
+
+    The newest price observation depends on the publication lag of the source
+    (FRED/EIA publish daily series about a week late); the pipeline run time
+    tells whether the scheduled flow is actually executing.
+    """
+    try:
+        run = db.load_last_pipeline_run()
+    except Exception:
+        return None
+    if not run:
+        return None
+    return {
+        "last_run_at": _iso_utc(run["completed_at"]),
+        "status": run["status"],
+        "last_success_at": _iso_utc(run["last_success_at"]),
+    }
 
 
 def load_latest_signals() -> pd.DataFrame:

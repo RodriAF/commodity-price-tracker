@@ -31,6 +31,15 @@ body {
   @apply bg-panel border border-border rounded-lg p-4;
 }
 
+/*
+ * Recharts draws axis titles, reference-line labels and the Brush date
+ * bubbles slightly outside the plot area. Browsers clip <svg> content to the
+ * SVG box by default, which is what was cutting those labels off.
+ */
+.recharts-surface {
+  overflow: visible;
+}
+
 /* Scrollbar — keep it subtle on dark backgrounds */
 ::-webkit-scrollbar {
   width: 8px;

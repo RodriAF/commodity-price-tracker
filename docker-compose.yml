@@ -91,30 +91,30 @@ services:
   # ------------------------------------------------------------------
   # React + Vite Frontend
   # ------------------------------------------------------------------
-  #frontend:
-  #  build:
-  #    context: ./frontend
-  #  container_name: commodity-frontend
-  #  ports:
-  #    - "5173:5173"
-  #  environment:
-  #    - VITE_API_BASE_URL=http://localhost:8000
-  #  volumes:
-  #    - ./frontend:/app
-  #    - /app/node_modules
-  #  depends_on:
-  #    - backend
+  frontend:
+    build:
+      context: ./frontend
+    container_name: commodity-frontend
+    ports:
+      - "5173:5173"
+    environment:
+      - VITE_API_BASE_URL=http://localhost:8000
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    depends_on:
+      - backend
 
   # ------------------------------------------------------------------
   # Cloudflare Tunnel Agent
   # ------------------------------------------------------------------
-  cloudflare-tunnel:
-    image: cloudflare/cloudflared:latest
-    container_name: commodity-cloudflare-tunnel
-    command: tunnel --no-autoupdate run --token ${TOKEN_CLOUDFLARE}
-    restart: always
-    depends_on:
-      - backend
+  #cloudflare-tunnel:
+  #  image: cloudflare/cloudflared:latest
+  #  container_name: commodity-cloudflare-tunnel
+  #  command: tunnel --no-autoupdate run --token ${TOKEN_CLOUDFLARE}
+  #  restart: always
+ #   depends_on:
+  #    - backend
       
 # ------------------------------------------------------------------
 # Central Volumes Matrix

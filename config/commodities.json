@@ -8,28 +8,28 @@
     "daily": {
       "period": 365,
       "min_data_points": 730,
-      "forecast_steps": 7,
+      "forecast_steps": 20,
       "change_periods": 1,
       "ma_window": 7
     },
     "weekly": {
       "period": 52,
       "min_data_points": 104,
-      "forecast_steps": 4,
+      "forecast_steps": 12,
       "change_periods": 1,
       "ma_window": 4
     },
     "monthly": {
       "period": 12,
       "min_data_points": 36,
-      "forecast_steps": 3,
+      "forecast_steps": 6,
       "change_periods": 1,
       "ma_window": 3
     },
     "quarterly": {
       "period": 4,
       "min_data_points": 20,
-      "forecast_steps": 2,
+      "forecast_steps": 4,
       "change_periods": 1,
       "ma_window": 4
     }

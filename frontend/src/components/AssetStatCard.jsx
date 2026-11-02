@@ -1,4 +1,5 @@
 import { fmtNumber, fmtZScore } from '../utils/format'
+import { useLanguage } from '../i18n/LanguageContext'
 
 function percentileColor(pctile) {
   if (pctile === null || pctile === undefined) return '#475569'
@@ -11,19 +12,26 @@ function percentileColor(pctile) {
  * Replicates `.stat-card` from the Analysis page: current value, unit,
  * percentile + z-score, and a percentile progress bar.
  */
-export default function AssetStatCard({ name, unit, current, zscore, percentile }) {
+export default function AssetStatCard({ name, unit, current, zscore, percentile, lineColor }) {
+  const { t, tDyn, ord } = useLanguage()
   const color = percentileColor(percentile)
 
   return (
     <div className="card">
-      <p className="font-mono text-[0.68rem] text-faint uppercase tracking-[0.1em] mb-1">{name}</p>
+      <p className="font-mono text-[0.68rem] text-faint uppercase tracking-[0.1em] mb-1 flex items-center gap-1.5">
+        {/* Dot = colour of this asset's line in the chart */}
+        {lineColor && (
+          <span className="inline-block h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: lineColor }} />
+        )}
+        <span>{tDyn(name)}</span>
+      </p>
       <p className="font-mono text-[1.4rem] font-semibold text-heading leading-none">
         {current !== null ? fmtNumber(current) : '—'}
       </p>
-      <p className="font-mono text-[0.75rem] text-subtle mt-1">{unit}</p>
+      <p className="font-mono text-[0.75rem] text-subtle mt-1">{tDyn(unit)}</p>
       <p className="font-mono text-[0.75rem] text-subtle mt-2">
-        Percentile:{' '}
-        <strong style={{ color }}>{percentile !== null ? `${Math.round(percentile)}th` : '—'}</strong>
+        {t('analysis.percentile')}:{' '}
+        <strong style={{ color }}>{percentile !== null ? ord(percentile) : '—'}</strong>
         {'  ·  '}Z: <strong className="text-body">{zscore !== null ? fmtZScore(zscore) : '—'}</strong>
       </p>
       <div className="h-1.5 bg-border rounded-full mt-2 overflow-hidden">

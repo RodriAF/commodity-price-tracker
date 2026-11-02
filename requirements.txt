@@ -24,6 +24,7 @@ yfinance==0.2.54
 pytest
 
 prefect==2.19.9
+sqlalchemy<2.0.0
 
 duckdb==1.1.3
 

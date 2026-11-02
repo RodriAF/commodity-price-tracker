@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState } from 'react'
 import { api } from '../api/client'
 import { useApiData } from '../hooks/useApiData'
 import PageHeader from '../components/layout/PageHeader'
+import TopBar from '../components/layout/TopBar'
+import { useLanguage } from '../i18n/LanguageContext'
 import PriceHistoryChart from '../components/PriceHistoryChart'
 import ZScoreTimeSeriesChart from '../components/ZScoreTimeSeriesChart'
 import HistogramChart from '../components/HistogramChart'
@@ -10,32 +12,42 @@ import AssetStatCard from '../components/AssetStatCard'
 import { LoadingState, ErrorState, InfoState } from '../components/StatusStates'
 import { fmtNumber } from '../utils/format'
 
-const ACCENT_COLORS = ['#f59e0b', '#22c55e', '#38bdf8', '#a78bfa', '#f87171', '#34d399']
+// Line colours per selected asset (same order as the cards). 12 distinct colours so
+// that selecting many assets doesn't recycle colours too early.
+const ACCENT_COLORS = [
+  '#f59e0b', '#22c55e', '#38bdf8', '#a78bfa', '#f87171', '#34d399',
+  '#fb923c', '#e879f9', '#facc15', '#2dd4bf', '#818cf8', '#f472b6',
+]
 const RANGE_OPTIONS = ['3M', '6M', '1Y', '2Y', 'All']
 
 export default function Analysis() {
+  const { t, tDyn, tCat, ord } = useLanguage()
   const { data: commData, loading: commLoading, error: commError } = useApiData(() => api.commodities(), [])
 
-  const [sector, setSector] = useState('All')
+  const [sector, setSector] = useState('all')
   const [selectedAssets, setSelectedAssets] = useState([])
   const [normalize, setNormalize] = useState(false)
   const [showMA, setShowMA] = useState(true)
   const [showZ, setShowZ] = useState(true)
   const [range, setRange] = useState('2Y')
 
-  // Sector -> pool of commodity keys, e.g. { All: [...], Crop: [...], ... }
+  // Sector id -> pool of commodity keys, e.g. { all: [...], crop: [...], ... }
+  // (ids are language-independent; labels are translated at render time)
   const sectorOptions = useMemo(() => {
-    if (!commData) return { All: [] }
+    if (!commData) return { all: [] }
     const all = commData.commodities.map((c) => c.key)
-    const options = { All: all }
+    const options = { all }
     Object.entries(commData.categories).forEach(([cat, keys]) => {
       const filtered = keys.filter((k) => all.includes(k))
-      if (filtered.length > 0) {
-        options[cat.replace(/_/g, ' ').replace(/\b\w/g, (l) => l.toUpperCase())] = filtered
-      }
+      if (filtered.length > 0) options[cat] = filtered
     })
     return options
   }, [commData])
+
+  const sectorLabel = (id) =>
+    id === 'all'
+      ? t('common.all')
+      : tCat(id, id.replace(/_/g, ' ').replace(/\b\w/g, (l) => l.toUpperCase()))
 
   const pool = sectorOptions[sector] || []
 
@@ -47,7 +59,7 @@ export default function Analysis() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sector, commData])
 
-  const commodityName = (key) => commData?.commodities.find((c) => c.key === key)?.name || key.replace(/_/g, ' ')
+  const commodityName = (key) => tDyn(commData?.commodities.find((c) => c.key === key)?.name || key.replace(/_/g, ' '))
 
   const toggleAsset = (key) => {
     setSelectedAssets((prev) => (prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key]))
@@ -61,26 +73,27 @@ export default function Analysis() {
     [selectedAssets, range, normalize],
   )
 
-  if (commLoading) return <LoadingState label="Loading configuration…" />
+  if (commLoading) return <LoadingState label={t('analysis.loadingConfig')} />
   if (commError) return <ErrorState message={commError.detail || commError.message} />
 
   return (
     <div>
-      <PageHeader subtitle="Market Analysis" />
+      <TopBar />
+      <PageHeader subtitle={t('analysis.subtitle')} />
 
       {/* Chart configuration */}
       <div className="card flex flex-col gap-4">
         <div className="flex flex-wrap items-center gap-4">
           <div>
-            <p className="font-mono text-[0.68rem] text-faint uppercase tracking-[0.08em] mb-1">Market Sector</p>
+            <p className="font-mono text-[0.68rem] text-faint uppercase tracking-[0.08em] mb-1">{t('analysis.sector')}</p>
             <select
               value={sector}
               onChange={(e) => setSector(e.target.value)}
               className="bg-canvas border border-border rounded px-3 py-1.5 text-sm font-mono text-body"
             >
-              {Object.keys(sectorOptions).map((label) => (
-                <option key={label} value={label}>
-                  {label}
+              {Object.keys(sectorOptions).map((id) => (
+                <option key={id} value={id}>
+                  {sectorLabel(id)}
                 </option>
               ))}
             </select>
@@ -89,21 +102,21 @@ export default function Analysis() {
           <div className="flex items-center gap-4 ml-auto">
             <label className="flex items-center gap-2 text-sm text-muted cursor-pointer">
               <input type="checkbox" checked={normalize} onChange={(e) => setNormalize(e.target.checked)} />
-              Normalize (Base 100)
+              {t('analysis.normalize')}
             </label>
             <label className="flex items-center gap-2 text-sm text-muted cursor-pointer">
               <input type="checkbox" checked={showMA} onChange={(e) => setShowMA(e.target.checked)} />
-              Moving Average
+              {t('analysis.ma')}
             </label>
             <label className="flex items-center gap-2 text-sm text-muted cursor-pointer">
               <input type="checkbox" checked={showZ} onChange={(e) => setShowZ(e.target.checked)} />
-              Z-Score
+              {t('analysis.zscore')}
             </label>
           </div>
         </div>
 
         <div>
-          <p className="font-mono text-[0.68rem] text-faint uppercase tracking-[0.08em] mb-1">Assets</p>
+          <p className="font-mono text-[0.68rem] text-faint uppercase tracking-[0.08em] mb-1">{t('analysis.assets')}</p>
           <div className="flex flex-wrap gap-2">
             {pool.map((key) => (
               <button
@@ -122,7 +135,7 @@ export default function Analysis() {
         </div>
 
         <div>
-          <p className="font-mono text-[0.68rem] text-faint uppercase tracking-[0.08em] mb-1">Observation Window</p>
+          <p className="font-mono text-[0.68rem] text-faint uppercase tracking-[0.08em] mb-1">{t('analysis.window')}</p>
           <div className="flex gap-2">
             {RANGE_OPTIONS.map((opt) => (
               <button
@@ -132,26 +145,36 @@ export default function Analysis() {
                   range === opt ? 'border-warn text-warn' : 'border-border text-faint hover:text-muted'
                 }`}
               >
-                {opt}
+                {t(`analysis.range.${opt}`)}
               </button>
             ))}
           </div>
         </div>
       </div>
 
-      {selectedAssets.length === 0 && <InfoState message="Awaiting asset selection from the configuration menu." />}
+      {selectedAssets.length === 0 && <InfoState message={t('analysis.awaiting')} />}
 
-      {loading && <LoadingState label="Loading analysis…" />}
+      {loading && <LoadingState label={t('analysis.loading')} />}
       {error && <ErrorState message={error.detail || error.message} />}
 
-      {data && (
+      {data && (() => {
+        // `data` can briefly lag behind `selectedAssets` while a new request
+        // for the analysis endpoint is in flight (e.g. useApiData keeps
+        // showing the previous response during loading). Restricting to the
+        // keys that actually exist in `data.series`/`data.current` avoids
+        // crashing the render (and blanking the whole page) when toggling
+        // an asset that hasn't arrived in the response yet.
+        const availableAssets = selectedAssets.filter((c) => data.series[c] && data.current[c])
+
+        return (
         <>
           {/* Current market values */}
-          <p className="section-title">Current Market Values</p>
+          <p className="section-title">{t('analysis.currentValues')}</p>
           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
-            {selectedAssets.slice(0, 5).map((c) => (
+            {availableAssets.map((c, idx) => (
               <AssetStatCard
                 key={c}
+                lineColor={ACCENT_COLORS[idx % ACCENT_COLORS.length]}
                 name={data.series[c].name}
                 unit={data.series[c].unit}
                 current={data.current[c].value}
@@ -162,16 +185,16 @@ export default function Analysis() {
           </div>
 
           {/* Primary time series chart */}
-          <p className="section-title">Historical Price Trends</p>
+          <p className="section-title">{t('analysis.trends')}</p>
           <div className="card">
             <PriceHistoryChart
               dates={data.dates}
-              series={selectedAssets.reduce((acc, c, idx) => {
+              series={availableAssets.reduce((acc, c, idx) => {
                 const color = ACCENT_COLORS[idx % ACCENT_COLORS.length]
-                acc[c] = { name: data.series[c].name, values: data.series[c].values, color, strokeWidth: 2 }
+                acc[c] = { name: tDyn(data.series[c].name), values: data.series[c].values, color, strokeWidth: 2 }
                 if (showMA && data.series[c].ma) {
                   acc[`${c}_ma`] = {
-                    name: `${data.series[c].name} MA`,
+                    name: t('analysis.maSuffix', { name: tDyn(data.series[c].name) }),
                     values: data.series[c].ma,
                     color,
                     dashed: true,
@@ -183,23 +206,23 @@ export default function Analysis() {
                 return acc
               }, {})}
               height={420}
-              yLabel={normalize ? 'Normalized Index (Base 100)' : 'Asset Price'}
+              yLabel={normalize ? t('analysis.yNormalized') : t('analysis.yPrice')}
             />
             {normalize && (
               <p className="font-mono text-[0.7rem] text-subtle mt-2">
-                Timeseries data is synthetically rebased to an index of 100 for proper scale comparison.
+                {t('analysis.normalizeNote')}
               </p>
             )}
           </div>
 
           {/* Z-score deviation (single asset) */}
-          {showZ && selectedAssets.length === 1 && data.series[selectedAssets[0]].zscore && (
+          {showZ && availableAssets.length === 1 && data.series[availableAssets[0]].zscore && (
             <>
-              <p className="section-title">Statistical Deviation (Z-Score)</p>
+              <p className="section-title">{t('analysis.zSection')}</p>
               <div className="card">
-                <ZScoreTimeSeriesChart dates={data.dates} values={data.series[selectedAssets[0]].zscore} />
+                <ZScoreTimeSeriesChart dates={data.dates} values={data.series[availableAssets[0]].zscore} />
                 <p className="font-mono text-[0.7rem] text-subtle mt-2">
-                  |z| &gt; 2: Standard Deviation Threshold Breached | Rolling statistical logic enforced via DuckDB metrics.
+                  {t('analysis.zNote')}
                 </p>
               </div>
             </>
@@ -208,16 +231,16 @@ export default function Analysis() {
           {/* Historical frequency distribution (single asset) */}
           {data.histogram && (
             <>
-              <p className="section-title">Historical Frequency Distribution</p>
+              <p className="section-title">{t('analysis.distribution')}</p>
               <div className="card">
                 <HistogramChart
                   values={data.histogram.values}
                   current={data.histogram.current}
                   secondary={data.histogram.median}
-                  secondaryLabel="Median Value"
-                  currentLabel={`Current (${Math.round(data.histogram.percentile ?? 0)}th pct)`}
-                  xLabel={data.histogram.unit || 'Quoted Price'}
-                  height={220}
+                  secondaryLabel={t('analysis.median')}
+                  currentLabel={t('analysis.currentPct', { n: Math.round(data.histogram.percentile ?? 0) })}
+                  xLabel={data.histogram.unit ? tDyn(data.histogram.unit) : t('analysis.quotedPrice')}
+                  height={240}
                 />
               </div>
               <PercentileMessage histogram={data.histogram} sinceYear={data.histogram.since_year} />
@@ -227,32 +250,35 @@ export default function Analysis() {
           {/* Correlation matrix (2+ assets) */}
           {data.correlation && (
             <>
-              <p className="section-title">Pearson Correlation Architecture</p>
+              <p className="section-title">{t('analysis.correlation')}</p>
               <div className="card">
-                <CorrelationHeatmap labels={data.correlation.labels} matrix={data.correlation.matrix} />
+                <CorrelationHeatmap labels={data.correlation.labels.map(tDyn)} matrix={data.correlation.matrix} />
               </div>
-              <CorrelationPairs correlation={data.correlation} />
+              <CorrelationPairs correlation={{ ...data.correlation, labels: data.correlation.labels.map(tDyn) }} />
             </>
           )}
 
           {/* Descriptive stats summary */}
-          <p className="section-title">Descriptive Data Summary</p>
+          <p className="section-title">{t('analysis.summary')}</p>
           <StatsTable stats={data.stats} />
         </>
-      )}
+        )
+      })()}
     </div>
   )
 }
 
 function PercentileMessage({ histogram, sinceYear }) {
+  const { t, ord } = useLanguage()
   const pctile = histogram.percentile ?? 0
+  const params = { p: ord(pctile), year: sinceYear }
   let msg
   if (pctile > 85) {
-    msg = `Observation flagged: value is at the ${Math.round(pctile)}th percentile, marking an elevated position above 85% of recorded history since ${sinceYear}.`
+    msg = t('analysis.pctHigh', params)
   } else if (pctile < 15) {
-    msg = `Observation flagged: value is at the ${Math.round(pctile)}th percentile, marking a depressed position below 85% of recorded history since ${sinceYear}.`
+    msg = t('analysis.pctLow', params)
   } else {
-    msg = `Normal distribution range: currently at the ${Math.round(pctile)}th percentile, well within expected standard deviation profiles.`
+    msg = t('analysis.pctNormal', params)
   }
   return (
     <p className="font-mono text-[0.82rem] text-muted px-4 py-3 bg-panel rounded-md border-l-[3px] border-l-faint">
@@ -262,6 +288,7 @@ function PercentileMessage({ histogram, sinceYear }) {
 }
 
 function CorrelationPairs({ correlation }) {
+  const { t } = useLanguage()
   const { labels, matrix } = correlation
   const pairs = []
   for (let i = 0; i < labels.length; i++) {
@@ -278,7 +305,7 @@ function CorrelationPairs({ correlation }) {
     <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-2">
       <div>
         <p className="font-mono text-[0.7rem] text-faint uppercase tracking-[0.1em] mb-2">
-          Primary Positive Correlation Base
+          {t('analysis.corrPositive')}
         </p>
         {positive.map((p, i) => (
           <p key={i} className="font-mono text-[0.8rem] text-muted my-1">
@@ -288,7 +315,7 @@ function CorrelationPairs({ correlation }) {
       </div>
       <div>
         <p className="font-mono text-[0.7rem] text-faint uppercase tracking-[0.1em] mb-2">
-          Primary Inverse Correlation Base
+          {t('analysis.corrInverse')}
         </p>
         {negative.map((p, i) => (
           <p key={i} className="font-mono text-[0.8rem] text-muted my-1">
@@ -301,6 +328,7 @@ function CorrelationPairs({ correlation }) {
 }
 
 function StatsTable({ stats }) {
+  const { t, tDyn } = useLanguage()
   const pctileColor = (val) => {
     if (val === null || val === undefined) return 'text-subtle'
     if (val > 80) return 'text-neg font-semibold'
@@ -313,20 +341,20 @@ function StatsTable({ stats }) {
       <table className="w-full text-sm">
         <thead>
           <tr className="font-mono text-[0.65rem] text-faint uppercase tracking-[0.08em] border-b border-border">
-            <th className="text-left px-4 py-3">Asset Identifier</th>
-            <th className="text-left px-4 py-3">Freq</th>
-            <th className="text-right px-4 py-3">Current Value</th>
-            <th className="text-right px-4 py-3">Pctile Limit</th>
-            <th className="text-right px-4 py-3">Mean Avg</th>
-            <th className="text-right px-4 py-3">Volatility</th>
-            <th className="text-right px-4 py-3">Min Low</th>
-            <th className="text-right px-4 py-3">Max High</th>
+            <th className="text-left px-4 py-3">{t('analysis.th.asset')}</th>
+            <th className="text-left px-4 py-3">{t('common.freqShort')}</th>
+            <th className="text-right px-4 py-3">{t('analysis.th.current')}</th>
+            <th className="text-right px-4 py-3">{t('analysis.th.pctile')}</th>
+            <th className="text-right px-4 py-3">{t('analysis.th.mean')}</th>
+            <th className="text-right px-4 py-3">{t('analysis.th.vol')}</th>
+            <th className="text-right px-4 py-3">{t('analysis.th.min')}</th>
+            <th className="text-right px-4 py-3">{t('analysis.th.max')}</th>
           </tr>
         </thead>
         <tbody>
           {stats.map((s) => (
             <tr key={s.key} className="border-b border-panel hover:bg-border-soft/40">
-              <td className="px-4 py-2 text-body">{s.name}</td>
+              <td className="px-4 py-2 text-body">{tDyn(s.name)}</td>
               <td className="px-4 py-2 text-muted font-mono text-xs">{s.frequency}</td>
               <td className="px-4 py-2 text-right font-mono text-heading">{fmtNumber(s.current)}</td>
               <td className={`px-4 py-2 text-right font-mono ${pctileColor(s.percentile)}`}>

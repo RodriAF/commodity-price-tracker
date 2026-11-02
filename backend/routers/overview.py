@@ -12,6 +12,7 @@ import pandas as pd
 from fastapi import APIRouter, HTTPException, Query
 
 from services import prices as price_service
+from utils.alignment import align_wide_frame
 from utils.config_loader import ConfigLoader
 
 router = APIRouter(tags=["overview"])
@@ -40,12 +41,16 @@ def get_overview(
     Aggregated snapshot of the market: KPIs, category breakdown, price
     history, active anomaly signals, and the full commodity snapshot table.
     """
-    df = price_service.load_wide_prices()
-    if df.empty:
+    # Two views of the same data:
+    #   df_raw  real observations only (sparse) — last price, change %, as-of dates
+    #   df      forward-filled onto a common calendar — continuous chart lines
+    df_raw = price_service.load_wide_prices(aligned=False)
+    if df_raw.empty:
         raise HTTPException(
             status_code=404,
             detail="No data found in DuckDB. Please run the data pipeline first.",
         )
+    df = align_wide_frame(df_raw)
 
     base_cols = price_service.base_commodity_columns(df)
     latest_signals = price_service.load_latest_signals()
@@ -53,7 +58,9 @@ def get_overview(
     # ------------------------------------------------------------ #
     # KPI strip                                                     #
     # ------------------------------------------------------------ #
-    last_date = df["date"].max()
+    # Date of the newest price observation (bounded by the source's publication
+    # lag) — NOT the time the pipeline last ran; that is `pipeline` below.
+    last_date = df_raw["date"].max()
     n_commodities = len(base_cols)
     n_signals = int(len(latest_signals))
     n_extreme = int((latest_signals["z_score"].abs() > 2).sum()) if not latest_signals.empty else 0
@@ -74,8 +81,9 @@ def get_overview(
             {
                 "key": c,
                 "name": price_service.commodity_display_name(c),
-                "price": price_service.last_valid(df, c),
-                "change_pct": price_service.change_pct(df, c),
+                "price": price_service.last_valid(df_raw, c),
+                "change_pct": price_service.change_pct(df_raw, c),
+                "as_of": price_service.last_observation_date(df_raw, c),
             }
         )
 
@@ -137,8 +145,9 @@ def get_overview(
                 "name": price_service.commodity_display_name(c),
                 "category": info.get("category", "other").replace("_", " ").title(),
                 "frequency": info.get("frequency", "monthly").title()[:3],
-                "price": price_service.last_valid(df, c),
-                "change_pct": price_service.change_pct(df, c),
+                "price": price_service.last_valid(df_raw, c),
+                "change_pct": price_service.change_pct(df_raw, c),
+                "as_of": price_service.last_observation_date(df_raw, c),
                 "z_score": z,
                 "signal": signal_label,
             }
@@ -150,6 +159,7 @@ def get_overview(
 
     return {
         "last_update": last_date.strftime("%Y-%m-%d"),
+        "pipeline": price_service.load_pipeline_status(),
         "n_commodities": n_commodities,
         "active_signals": n_signals,
         "extreme_signals": n_extreme,

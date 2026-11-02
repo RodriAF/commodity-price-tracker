@@ -111,13 +111,73 @@ def initialize() -> None:
         );
     """
 
+    create_schema_meta_sql = """
+        CREATE TABLE IF NOT EXISTS schema_meta (
+            key VARCHAR PRIMARY KEY,
+            value VARCHAR
+        );
+    """
+
     with get_connection() as conn:
         conn.execute(create_prices_sql)
         conn.execute(create_signals_sql)
         conn.execute(create_forecasts_sql)
         conn.execute(create_pipeline_runs_sql)
-        
+        conn.execute(create_schema_meta_sql)
+
     logger.info("Database schema initialized successfully.")
+
+
+# ------------------------------------------------------------------ #
+# Data-version migration                                             #
+# ------------------------------------------------------------------ #
+
+# Version 2 = `prices` stores ONLY real observations. Earlier versions
+# forward-filled every series onto the union calendar before saving, so low
+# frequency series (monthly/quarterly) carried fabricated daily rows. Those
+# rows are indistinguishable from real ones, so they are purged once and the
+# next fetch repopulates the table with genuine observations.
+CURRENT_DATA_VERSION = 2
+
+
+def get_data_version() -> int:
+    """Return the stored data version (0 when the DB predates versioning)."""
+    with get_connection() as conn:
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS schema_meta (key VARCHAR PRIMARY KEY, value VARCHAR)"
+        )
+        row = conn.execute(
+            "SELECT value FROM schema_meta WHERE key = 'data_version'"
+        ).fetchone()
+    return int(row[0]) if row and row[0] is not None else 0
+
+
+def set_data_version(version: int) -> None:
+    """Persist the data version after a successful migration."""
+    with get_connection() as conn:
+        conn.execute(
+            """
+            INSERT INTO schema_meta (key, value) VALUES ('data_version', ?)
+            ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
+            """,
+            [str(version)],
+        )
+
+
+def purge_forward_filled_history() -> None:
+    """
+    Remove rows derived from the legacy forward-filled storage: every price
+    and the per-date momentum signals (which were computed on those prices).
+    Ratio/anomaly signals and forecast history are kept.
+    """
+    with get_connection() as conn:
+        conn.execute("DELETE FROM prices")
+        conn.execute("DELETE FROM signals WHERE metric = 'price_momentum'")
+    logger.warning(
+        "Legacy forward-filled price history purged (data version < %s); "
+        "it is rebuilt from the freshly downloaded series.",
+        CURRENT_DATA_VERSION,
+    )
 
 
 # ------------------------------------------------------------------ #
@@ -216,9 +276,22 @@ def upsert_forecasts(df: pd.DataFrame) -> None:
         predictions_json = EXCLUDED.predictions_json,
         metrics_json = EXCLUDED.metrics_json,
         confidence = EXCLUDED.confidence;
-"""
+    """
     
     with get_connection() as conn:
+        # Replace semantics per (run_date, commodity): a re-run on the same day
+        # must not leave stale model rows (e.g. from a previous model set).
+        keys = df[["run_date", "commodity"]].drop_duplicates()
+        conn.execute(
+            """
+            DELETE FROM forecasts
+            WHERE EXISTS (
+                SELECT 1 FROM keys 
+                WHERE forecasts.run_date = keys.run_date::DATE 
+                  AND forecasts.commodity = keys.commodity::VARCHAR
+            )
+            """
+        )
         conn.execute(upsert_sql)
         logger.info(f"Upserted {len(df)} rows into 'forecasts' table.")
 
@@ -293,6 +366,41 @@ def load_prices(commodity: Optional[str] = None,
         df = conn.execute(query, params).df()
         
     return df
+
+def load_last_pipeline_run() -> Optional[Dict[str, Any]]:
+    """
+    Return metadata of the most recent *finished* pipeline run, or None.
+
+    Used by the API to show when the flow last executed, which is a different
+    thing from the date of the newest price observation (that one depends on
+    the publication lag of the data source).
+    """
+    with get_connection() as conn:
+        row = conn.execute(
+            """
+            SELECT run_id, started_at, completed_at, status
+            FROM pipeline_runs
+            WHERE completed_at IS NOT NULL
+            ORDER BY completed_at DESC
+            LIMIT 1
+            """
+        ).fetchone()
+        last_success = conn.execute(
+            """
+            SELECT MAX(completed_at) FROM pipeline_runs WHERE status = 'SUCCESS'
+            """
+        ).fetchone()
+
+    if not row:
+        return None
+    return {
+        "run_id": row[0],
+        "started_at": row[1],
+        "completed_at": row[2],
+        "status": row[3],
+        "last_success_at": last_success[0] if last_success else None,
+    }
+
 
 def check_if_schema_exists() -> bool:
     """

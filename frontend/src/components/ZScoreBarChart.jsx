@@ -1,8 +1,12 @@
 import { Bar, BarChart, CartesianGrid, Cell, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { fmtZScore } from '../utils/format'
+import { useLanguage } from '../i18n/LanguageContext'
 
 const CHART_GRID = '#1e2330'
 const CHART_AXIS = '#475569'
+
+// Keep the ±1 / ±2 threshold lines visible even when every z-score is small.
+const Z_DOMAIN = [(min) => Math.min(-2.5, Math.floor(min)), (max) => Math.max(2.5, Math.ceil(max))]
 
 function barColor(z) {
   const abs = Math.abs(z)
@@ -18,9 +22,11 @@ function barColor(z) {
  * `data` is `[{ label, z }]`.
  */
 export default function ZScoreBarChart({ data, height = 260, layout = 'vertical' }) {
+  const { t } = useLanguage()
+
   return (
     <ResponsiveContainer width="100%" height={height}>
-      <BarChart data={data} layout={layout} margin={{ top: 8, right: 16, bottom: 8, left: layout === 'horizontal' ? 100 : 0 }}>
+      <BarChart data={data} layout={layout} margin={{ top: 8, right: 20, bottom: 8, left: layout === 'horizontal' ? 100 : 0 }}>
         <CartesianGrid stroke={CHART_GRID} horizontal={layout === 'vertical'} vertical={layout === 'horizontal'} />
         {layout === 'vertical' ? (
           <>
@@ -31,20 +37,23 @@ export default function ZScoreBarChart({ data, height = 260, layout = 'vertical'
               tickLine={{ stroke: CHART_GRID }}
               angle={-35}
               textAnchor="end"
-              height={70}
+              height={96}
               interval={0}
             />
             <YAxis
               tick={{ fill: CHART_AXIS, fontSize: 9, fontFamily: 'IBM Plex Mono' }}
               axisLine={{ stroke: CHART_GRID }}
               tickLine={{ stroke: CHART_GRID }}
-              label={{ value: 'Z-Score (σ)', angle: -90, position: 'insideLeft', fill: CHART_AXIS, fontSize: 10 }}
+              width={56}
+              domain={Z_DOMAIN}
+              label={{ value: t('ratios.zAxis'), angle: -90, position: 'insideLeft', fill: CHART_AXIS, fontSize: 10 }}
             />
           </>
         ) : (
           <>
             <XAxis
               type="number"
+              domain={Z_DOMAIN}
               tick={{ fill: CHART_AXIS, fontSize: 9, fontFamily: 'IBM Plex Mono' }}
               axisLine={{ stroke: CHART_GRID }}
               tickLine={{ stroke: CHART_GRID }}
@@ -61,7 +70,7 @@ export default function ZScoreBarChart({ data, height = 260, layout = 'vertical'
         )}
         <Tooltip
           contentStyle={{ backgroundColor: '#141720', border: '1px solid #1e2330', borderRadius: 6, fontSize: 11, fontFamily: 'IBM Plex Mono' }}
-          formatter={(value) => [fmtZScore(value), 'Z-Score']}
+          formatter={(value) => [fmtZScore(value), t('ratios.zScore')]}
         />
         <ReferenceLine {...(layout === 'vertical' ? { y: 0 } : { x: 0 })} stroke={CHART_GRID} />
         <ReferenceLine {...(layout === 'vertical' ? { y: 2 } : { x: 2 })} stroke="rgba(239, 68, 68, 0.5)" strokeDasharray="3 3" />

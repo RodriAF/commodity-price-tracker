@@ -38,7 +38,7 @@ A **daily automated pipeline** that:
 2. **Validates** each series for minimum data quality (gaps, outliers, imputation rate) before ingesting it
 3. **Processes** the data into analytical signals: price change %, rolling moving averages, and frequency-calibrated z-scores
 4. **Analyzes** cross-commodity relationships: crop-to-input profitability ratios, cost environment indices, market regime classification, and Pearson correlation matrices
-5. **Forecasts** future prices per commodity using an **ensemble of 9 models** (statistical + ML), weighted by historical error, with GARCH-derived volatility bands
+5. **Forecasts** future prices per commodity on its own observation calendar, with a **pool of models chosen per series type**, a rolling-origin backtest, an always-visible **naive baseline**, and 80% / 95% prediction intervals
 6. **Persists** everything to DuckDB — a single embedded analytical warehouse shared by pipeline and API (read-only)
 7. **Alerts** via email when any z-score exceeds a configurable threshold, with HTML-formatted tables and market regime context
 8. **Serves** all outputs through a FastAPI REST backend consumed by a React dashboard with 4 analytical views
@@ -59,7 +59,7 @@ A **daily automated pipeline** that:
          │         AgriculturalCollector           │
          │  FRED API → 22 commodity series         │
          │  Retry (tenacity) · ffill imputation    │
-         │  Mixed frequency (D/W/M/Q) alignment    │
+         │  Mixed frequency (D/W/M/Q) series      │
          └─────────────────┬──────────────────────┘
                            │
          ┌─────────────────▼──────────────────────┐
@@ -72,7 +72,7 @@ A **daily automated pipeline** that:
          ┌─────────────────▼──────────────────────┐
          │          Task [3/6]: process            │
          │           DataPipeline                  │
-         │  Clean · Dedup · Merge · Forward-fill   │
+         │  Clean · Dedup · Merge (real obs. only) │
          │  Change % · Rolling MA · Z-Score        │
          │           ↓  Persist                    │
          │        DuckDB: prices table             │
@@ -142,26 +142,36 @@ Frequencies: `daily` · `weekly` · `monthly` · `quarterly` — all unified in 
 
 ---
 
+## Data Storage Contract
+
+The `prices` table stores **only real observations**: a monthly series has one row per month, a daily series one row per business day. Short gaps *inside* a single series (e.g. a market holiday) are forward-filled by the collector within a frequency-specific limit and flagged `is_imputed = true`. Series are never forward-filled onto each other's calendars in storage. Code that needs aligned series (ratios, correlations, chart lines) aligns them in memory with `utils.alignment.align_wide_frame`; code where it matters (change %, percentiles, statistics, forecasts) reads the raw observations.
+
+**"Data as of" vs "Pipeline last run".** The dashboard shows both. *Data as of* is the date of the newest price observation, which is bounded by the publication lag of the source (FRED publishes the EIA daily series about a week late, on Wednesdays). *Pipeline last run* is when the scheduled flow last finished, read from `pipeline_runs`.
+
+**Upgrading an existing database.** Earlier versions stored forward-filled prices. The first run after upgrading detects this (`schema_meta.data_version < 2`), purges the legacy `prices` rows and per-date momentum signals **after the fresh download is already in memory** (a failed download never empties the database), and rebuilds them from the new data. History is limited to the `DAYS_HISTORY` window (max 3650 days).
+
 ## Forecasting Engine
 
-Nine independent models per commodity, combined into a **weighted ensemble** (exponential error weighting of the top 3 models by MAPE):
+Every commodity is forecast on **its own observation calendar** (business days, weeks, months or quarters) — nothing is forward-filled onto another series' calendar. The model pool depends on the series type, and every model is judged against a **naive "last value" baseline** on a **rolling-origin backtest**.
 
-**Statistical / Econometric:**
-- `ARIMA` — AutoRegressive Integrated Moving Average (auto-order via pmdarima)
-- `SARIMA` — Seasonal ARIMA for periodic cycles
-- `Exponential Smoothing (Holt)` — Trend-adjusted double exponential smoothing
-- `GARCH(1,1)` — Volatility modeling; outputs prediction intervals as confidence bands
+**Model pool, by series type**
 
-**Machine Learning (lag-feature based):**
-- `Gradient Boosting Regressor`
-- `Random Forest Regressor`
-- `XGBoost`
-- `Ridge Regression (CV)` — L2 regularized linear baseline
-- `LASSO (CV)` — L1 regularized; implicit feature selection on lag features
+| Series | Models |
+|---|---|
+| All | Naive (baseline), Drift, damped-trend ETS, Theta, ARIMA (auto-order via pmdarima, parameters refit per fold) |
+| Monthly / quarterly | + Seasonal naive, seasonal ETS, SARIMA (when the data shows seasonal structure), Ridge |
+| Weekly | + Seasonal naive (52), Ridge, LASSO, Gradient Boosting, Random Forest, XGBoost, GARCH |
+| Daily | + Ridge, LASSO, Gradient Boosting, Random Forest, XGBoost, GARCH |
 
-The ensemble avoids model lock-in: the best-performing models for each commodity and frequency receive higher ensemble weights automatically, based on their in-sample error history.
+ML models are trained on **returns** with features that only use past information (the target is the change to the *next* period). Prices are modelled in log space, so forecasts cannot go negative. `GARCH(1,1)` only feeds an alternative 90% volatility band; it is never an ensemble price candidate.
 
-Forecast horizons are calibrated per frequency: 10 days (daily), 10 weeks (weekly), 5 months (monthly), 4 quarters (quarterly).
+**Evaluation.** Models are scored with a rolling-origin backtest (up to 6-8 folds, each refit on the past). Besides MAE / MAPE / MASE, every model gets **rMAE = its MAE / the naive baseline's MAE** on the same folds. Confidence is *high* only when rMAE < 0.85, *medium* when it beats naive (< 1.00) and *low* otherwise — so a forecast that cannot beat "the price stays where it is" is labelled as such on the dashboard.
+
+**Ensemble.** The three best models by rMAE (naive included, so the ensemble shrinks toward "no change" when nothing beats it), weighted by `1 / rMAE²`. The ensemble gets its own backtest metrics, including **skill vs naive** and the **empirical coverage** of its intervals.
+
+**Intervals.** 80% and 95% bands from the historical distribution of k-step-ahead changes of the series (overlapping windows, Student-t quantiles for short histories), rescaled by the recent volatility regime.
+
+**Horizons** are configured per frequency in `config/commodities.json` (`forecast_steps`): 20 days (daily), 12 weeks (weekly), 6 months (monthly), 4 quarters (quarterly).
 
 ---
 
@@ -189,7 +199,7 @@ Four analytical pages served by the React frontend:
 
 **Ratios** — Profitability ratio explorer (crop/input pairs over time); composite input cost index chart; z-score time series for ratio signals.
 
-**Forecasting** — Ensemble forecast chart with GARCH confidence bands; individual model comparison table ranked by MAPE; directional change indicator (current → T+1 with % delta).
+**Forecasting** — Ensemble forecast with an 80% / 95% interval fan, the naive baseline drawn next to it, backtest evaluation (skill vs naive, interval coverage), period-by-period table and a model comparison ranked by error relative to naive.
 
 ---
 
@@ -211,7 +221,7 @@ Four analytical pages served by the React frontend:
 | **Containerization** | Docker + Docker Compose |
 | **Alerts** | SMTP (configurable; falls back to log) |
 | **Config** | `.env` + Pydantic Settings (type-safe, validated) |
-| **Testing** | `pytest` (pipeline, calculations, forecaster) |
+| **Testing** | `pytest` (pipeline, storage, calculations, forecaster, flow adapters, API) |
 
 ---
 
@@ -277,7 +287,7 @@ The pipeline will run on startup and then on schedule (configurable cron or inte
 
 **Frequency-aware z-scores** — A monthly z-score uses a 12-period rolling window; a daily one uses 365. Computing them with a full-history mean (as many dashboards do) produces a different number than the pipeline's stored value. Here, the pipeline is the single source of truth, and the API reads pre-computed signals.
 
-**Weighted ensemble forecasting** — The ensemble ranks valid forecasting models by MASE when available, falling back to MAPE when MASE cannot be calculated. It selects the top three models and computes their ensemble weights using an exponential weighting scheme based on MAPE. GARCH is excluded from price-forecast aggregation and is used separately for volatility estimates displayed on the dashboard.
+**Weighted ensemble forecasting** — Models are ranked by rMAE (error relative to the naive baseline on a rolling-origin backtest), the top three are blended with weights proportional to `1 / rMAE²`, and GARCH is excluded from price aggregation and used only for a volatility band. See *Forecasting Engine* above.
 
 **Prefect for orchestration, not Airflow** — Lower operational weight for a single-developer freelance deployment. Self-hosted Prefect server + Postgres is a two-service addition to the compose file, with a full UI and retry/log visibility.
 
