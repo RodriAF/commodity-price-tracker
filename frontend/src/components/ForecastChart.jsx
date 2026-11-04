@@ -20,8 +20,34 @@ const CHART_GRID = '#1e2330'
 const CHART_AXIS = '#475569'
 const ENSEMBLE_COLOR = 'rgba(245, 158, 11, 1)'
 
-// Series that are drawn but must not show up as plain numbers in the tooltip.
-const HIDDEN_IN_TOOLTIP = new Set(['band95', 'band80', 'garch_lo', 'garch_hi'])
+/**
+ * Tooltip row for one series.
+ *
+ * Recharts calls the formatter with `name` = the series' display `name` prop
+ * (already translated, e.g. "Intervalo 95 %"), NOT its dataKey, and with
+ * `value` = the raw datum, which for the interval bands is a `[lower, upper]`
+ * array. Series are therefore identified through `entry.dataKey`, and ranges are
+ * rendered as "lower – upper" (calling Number() on the array gives NaN).
+ * Returning null hides the row.
+ */
+export function formatTooltipEntry(value, name, entry, garchLabel = 'GARCH') {
+  if (value === null || value === undefined) return null
+
+  if (Array.isArray(value)) {
+    const [lower, upper] = value
+    if (!Number.isFinite(lower) || !Number.isFinite(upper)) return null
+    return [`${lower.toFixed(2)} – ${upper.toFixed(2)}`, name]
+  }
+
+  const num = Number(value)
+  if (!Number.isFinite(num)) return null
+
+  // The two GARCH lines share one legend entry; label each side in the tooltip.
+  if (entry?.dataKey === 'garch_hi') return [num.toFixed(2), `${garchLabel} ▲`]
+  if (entry?.dataKey === 'garch_lo') return [num.toFixed(2), `${garchLabel} ▼`]
+
+  return [num.toFixed(2), name]
+}
 
 /**
  * Forecast chart.
@@ -83,13 +109,6 @@ export default function ForecastChart({
     setBrushKey((k) => k + 1)
   }
 
-  const labelFor = (name) => {
-    if (name === 'historical') return t('forecast.historical')
-    if (name === 'ensemble') return t('forecast.ensemble')
-    if (name === 'baseline') return t('forecast.naive')
-    return models.find((m) => m.key === name)?.name || name
-  }
-
   return (
     <div>
       <ChartZoomControls yMin={yMin} setYMin={setYMin} yMax={yMax} setYMax={setYMax} active={active} onResetAll={resetAll} />
@@ -116,10 +135,7 @@ export default function ForecastChart({
         <Tooltip
           contentStyle={{ backgroundColor: '#141720', border: '1px solid #1e2330', borderRadius: 6, fontSize: 11, fontFamily: 'IBM Plex Mono' }}
           labelFormatter={(d) => fmtDate(d)}
-          formatter={(value, name) => {
-            if (HIDDEN_IN_TOOLTIP.has(name) || value === null || value === undefined) return null
-            return [Number(value).toFixed(2), labelFor(name)]
-          }}
+          formatter={(value, name, entry) => formatTooltipEntry(value, name, entry, t('forecast.garchBand'))}
         />
         <Legend wrapperStyle={{ fontSize: 10, fontFamily: 'IBM Plex Mono', color: '#94a3b8' }} />
 
