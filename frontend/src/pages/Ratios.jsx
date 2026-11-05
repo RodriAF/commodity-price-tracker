@@ -22,7 +22,7 @@ const BADGE_CLASS = {
   normal: 'bg-[rgba(34,197,94,0.10)] text-pos',
 }
 
-const TREND_ICON = { up: ['↑', 'text-neg'], down: ['↓', 'text-pos'], flat: ['—', 'text-faint'] }
+const TREND_ICON = { up: ['↑', 'text-neg'], down: ['↓', 'text-pos'], flat: ['→', 'text-faint'] }
 
 const COST_INDEX_COLORS = {
   energy_input_cost_index: '#f59e0b',
@@ -34,7 +34,6 @@ const prettify = (s) => s.replace(/_/g, ' ').replace(/\b\w/g, (l) => l.toUpperCa
 export default function Ratios() {
   const { t, tDyn, tOr } = useLanguage()
   const [pair, setPair] = useState(null)
-  const [showTechnical, setShowTechnical] = useState(false)
 
   const { data, loading, error } = useApiData(() => api.ratios(pair), [pair])
 
@@ -45,7 +44,7 @@ export default function Ratios() {
     }
   }, [data, pair])
 
-  if (loading) return <LoadingState label={t('ratios.loading')} />
+  if (loading && !data) return <LoadingState label={t('ratios.loading')} />
   if (error) return <ErrorState message={error.detail || error.message} />
   if (!data) return null
 
@@ -148,7 +147,12 @@ export default function Ratios() {
                         {tOr(`ratios.status.${r.level}`, r.status)}
                       </span>
                     </td>
-                    <td className={`px-4 py-2 text-center text-base ${iconColor}`}>{icon}</td>
+                    <td className={`px-4 py-2 text-center ${iconColor}`}>
+                      <span className="text-base">{icon}</span>
+                      <span className="block font-mono text-[0.62rem] uppercase tracking-wide">
+                        {t(`ratios.trend.${TREND_ICON[r.trend] ? r.trend : 'flat'}`)}
+                      </span>
+                    </td>
                     <td className="px-4 py-2 font-mono text-[0.78rem] text-muted">
                       {t('ratios.worstDriver', { label: tDyn(r.worst_input_label), z: fmtZScore(r.worst_z, 1) })}
                       {otherDrivers && <div className="text-[0.72rem] text-faint mt-0.5">{otherDrivers}</div>}
@@ -163,71 +167,58 @@ export default function Ratios() {
         <InfoState message={t('ratios.noMargin')} />
       )}
 
-      {/* Section 4 — Technical detail (collapsed by default) */}
-      <p className="section-title">{t('ratios.technical')}</p>
-      <button
-        onClick={() => setShowTechnical((v) => !v)}
-        className="font-mono text-[0.7rem] text-muted uppercase tracking-wide px-3 py-1.5 border border-border rounded hover:text-heading mb-4"
-      >
-        {showTechnical ? t('ratios.hideTechnical') : t('ratios.showTechnical')}
-      </button>
+      {/* Section 4 — Ratio explorer (always visible) */}
+      <p className="section-title">{t('ratios.selectPair')}</p>
+      {ratio_pairs.length > 0 ? (
+        <div>
+          <select
+            value={pair ?? ''}
+            onChange={(e) => setPair(e.target.value)}
+            className="bg-canvas border border-border rounded px-3 py-1.5 text-sm font-mono text-body mb-4"
+          >
+            {ratio_pairs.map((p) => (
+              <option key={p} value={p}>
+                {p
+                  .split('_to_')
+                  .map((part) => tDyn(prettify(part)))
+                  .join(' / ')}
+              </option>
+            ))}
+          </select>
 
-      {showTechnical && (
-        <div className="flex flex-col gap-6">
-          <p className="font-mono text-[0.8rem] text-muted px-4 py-3 bg-panel rounded-md border-l-[3px] border-l-faint">
-            <Rich text={t('ratios.zNote')} />
-          </p>
-
-          {zscore_bars.length > 0 && (
-            <div className="card">
-              <ZScoreBarChart
-                data={zscore_bars.map((b) => ({ ...b, label: String(b.label).split(' / ').map(tDyn).join(' / ') }))}
-                height={340}
-              />
-              <p className="font-mono text-[0.7rem] text-subtle mt-2">
-                {t('ratios.zBarNote')}
-              </p>
+          {ratio_explorer && (
+            <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
+              <div className="card lg:col-span-3">
+                <RatioExplorerChart
+                  dates={ratio_explorer.dates}
+                  values={ratio_explorer.values}
+                  mean={ratio_explorer.mean}
+                  std={ratio_explorer.std}
+                />
+              </div>
+              <RatioExplorerSidePanel explorer={ratio_explorer} />
             </div>
-          )}
-
-          {ratio_pairs.length > 0 ? (
-            <div>
-              <p className="font-mono text-[0.68rem] text-faint uppercase tracking-[0.08em] mb-2">
-                {t('ratios.selectPair')}
-              </p>
-              <select
-                value={pair ?? ''}
-                onChange={(e) => setPair(e.target.value)}
-                className="bg-canvas border border-border rounded px-3 py-1.5 text-sm font-mono text-body mb-4"
-              >
-                {ratio_pairs.map((p) => (
-                  <option key={p} value={p}>
-                    {p
-                      .split('_to_')
-                      .map((part) => tDyn(prettify(part)))
-                      .join(' / ')}
-                  </option>
-                ))}
-              </select>
-
-              {ratio_explorer && (
-                <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
-                  <div className="card lg:col-span-3">
-                    <RatioExplorerChart
-                      dates={ratio_explorer.dates}
-                      values={ratio_explorer.values}
-                      mean={ratio_explorer.mean}
-                      std={ratio_explorer.std}
-                    />
-                  </div>
-                  <RatioExplorerSidePanel explorer={ratio_explorer} />
-                </div>
-              )}
-            </div>
-          ) : (
-            <InfoState message={t('ratios.noRatios')} />
           )}
         </div>
+      ) : (
+        <InfoState message={t('ratios.noRatios')} />
+      )}
+
+      {/* Section 5 — Z-Scores (always visible) */}
+      <p className="section-title">{t('ratios.zScores')}</p>
+      <p className="font-mono text-[0.8rem] text-muted px-4 py-3 bg-panel rounded-md border-l-[3px] border-l-faint mb-4">
+        <Rich text={t('ratios.zNote')} />
+      </p>
+      {zscore_bars.length > 0 ? (
+        <div className="card">
+          <ZScoreBarChart
+            data={zscore_bars.map((b) => ({ ...b, label: String(b.label).split(' / ').map(tDyn).join(' / ') }))}
+            height={340}
+          />
+          <p className="font-mono text-[0.7rem] text-subtle mt-2">{t('ratios.zBarNote')}</p>
+        </div>
+      ) : (
+        <InfoState message={t('ratios.noRatios')} />
       )}
     </div>
   )

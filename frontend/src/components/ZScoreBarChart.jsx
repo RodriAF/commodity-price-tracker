@@ -26,7 +26,9 @@ export default function ZScoreBarChart({ data, height = 260, layout = 'vertical'
 
   return (
     <ResponsiveContainer width="100%" height={height}>
-      <BarChart data={data} layout={layout} margin={{ top: 8, right: 20, bottom: 8, left: layout === 'horizontal' ? 100 : 0 }}>
+      {/* Recharts names layouts after the bar direction (its "horizontal" = vertical columns),
+          the opposite of this component's `layout` prop, so map it explicitly. */}
+      <BarChart data={data} layout={layout === 'vertical' ? 'horizontal' : 'vertical'} margin={{ top: 8, right: 20, bottom: 8, left: layout === 'horizontal' ? 100 : 0 }}>
         <CartesianGrid stroke={CHART_GRID} horizontal={layout === 'vertical'} vertical={layout === 'horizontal'} />
         {layout === 'vertical' ? (
           <>
@@ -46,6 +48,8 @@ export default function ZScoreBarChart({ data, height = 260, layout = 'vertical'
               tickLine={{ stroke: CHART_GRID }}
               width={56}
               domain={Z_DOMAIN}
+              allowDecimals={false}
+              tickCount={7}
               label={{ value: t('ratios.zAxis'), angle: -90, position: 'insideLeft', fill: CHART_AXIS, fontSize: 10 }}
             />
           </>

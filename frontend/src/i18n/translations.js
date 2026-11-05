@@ -151,15 +151,16 @@ export const translations = {
     'ratios.th.status': 'Estado del margen',
     'ratios.th.trend': 'Tendencia',
     'ratios.th.driver': 'Factor clave',
+    'ratios.trend.up': 'Subiendo',
+    'ratios.trend.down': 'Bajando',
+    'ratios.trend.flat': 'Estable',
     'ratios.worstDriver': 'Peor factor: {label} ({z})',
     'ratios.status.pressure': 'Presión',
     'ratios.status.elevated': 'Elevado',
     'ratios.status.normal': 'Normal',
     'ratios.noMargin':
       'No hay datos de márgenes: no hay suficiente histórico para calcular los z-scores.',
-    'ratios.technical': 'Detalle técnico',
-    'ratios.showTechnical': 'Mostrar Z-Scores y explorador de ratios',
-    'ratios.hideTechnical': 'Ocultar Z-Scores y explorador de ratios',
+    'ratios.zScores': 'Z-Scores',
     'ratios.zNote':
       'Los z-scores miden cuánto se desvía cada ratio de su propia media histórica móvil. **+z: precio del cultivo elevado respecto al coste del insumo (márgenes favorables).** **−z: coste del insumo elevado respecto al precio del cultivo (presión sobre márgenes).** El valor del ratio en sí no es comparable entre pares por tener unidades distintas.',
     'ratios.zBarNote': '|z| > 2 = extremo · |z| > 1 = notable · rango normal',
@@ -403,13 +404,14 @@ export const translations = {
     'ratios.th.status': 'Margin Status',
     'ratios.th.trend': 'Trend',
     'ratios.th.driver': 'Key Driver',
+    'ratios.trend.up': 'Rising',
+    'ratios.trend.down': 'Falling',
+    'ratios.trend.flat': 'Stable',
     'ratios.worstDriver': 'Worst driver: {label} ({z})',
     // `ratios.status.*` intentionally omitted: English shows the backend text.
     'ratios.noMargin':
       'No margin data available — not enough historical data to compute z-scores.',
-    'ratios.technical': 'Technical Detail',
-    'ratios.showTechnical': 'Show Z-Scores & Ratio Explorer',
-    'ratios.hideTechnical': 'Hide Z-Scores & Ratio Explorer',
+    'ratios.zScores': 'Z-Scores',
     'ratios.zNote':
       'Z-scores measure how far each ratio deviates from its own rolling historical average. **+z: crop price elevated relative to input cost (favourable margins).** **−z: input cost elevated relative to crop price (margin pressure).** The ratio value itself is not comparable across pairs due to different units.',
     'ratios.zBarNote': '|z| > 2 = extreme · |z| > 1 = notable · normal range',

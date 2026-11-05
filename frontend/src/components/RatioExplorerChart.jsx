@@ -45,6 +45,7 @@ export default function RatioExplorerChart({ dates, values, mean, std, height = 
           axisLine={{ stroke: CHART_GRID }}
           tickLine={{ stroke: CHART_GRID }}
           width={64}
+          tickFormatter={(v) => Number(v).toFixed(2)}
           domain={
             band2
               ? [Math.min(band2[0], ...numericValues), Math.max(band2[1], ...numericValues)]
