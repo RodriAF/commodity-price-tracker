@@ -297,3 +297,39 @@ class TestAnalysisApiUsesRealObservations:
     def test_analysis_endpoint_responds(self, client):
         r = client.get('/api/analysis', params={'commodities': 'corn,crude_oil', 'range': '1Y'})
         assert r.status_code == 200, r.text[:300]
+
+
+# --------------------------------------------------------------------------- #
+# Smoke tests: endpoints with no dedicated coverage above
+# --------------------------------------------------------------------------- #
+
+class TestSmokeEndpoints:
+    """Cheap 'does it respond and have the right shape' checks."""
+
+    def test_health_reports_database_reachable(self, client):
+        r = client.get('/api/health')
+        assert r.status_code == 200, r.text[:300]
+        assert r.json() == {'status': 'ok', 'database': 'reachable'}
+
+    def test_commodities_lists_registry_and_categories(self, client):
+        r = client.get('/api/commodities')
+        assert r.status_code == 200, r.text[:300]
+        body = r.json()
+        assert body['commodities'], 'commodity registry should not be empty'
+        assert {'key', 'name', 'category', 'frequency', 'unit'} <= set(body['commodities'][0])
+        # every commodity key referenced by a category exists in the registry
+        keys = {c['key'] for c in body['commodities']}
+        for members in body['categories'].values():
+            assert set(members) <= keys
+
+    def test_ratios_responds_with_expected_sections(self, client):
+        r = client.get('/api/ratios')
+        assert r.status_code == 200, r.text[:300]
+        assert {'regime', 'cost_index_history', 'margin_pressure',
+                'zscore_bars', 'ratio_pairs'} <= set(r.json())
+
+    def test_ratios_without_data_is_404_not_a_crash(self, tmp_db):
+        from fastapi.testclient import TestClient
+        import main as backend_main
+        r = TestClient(backend_main.app).get('/api/ratios')   # tmp_db is empty
+        assert r.status_code == 404

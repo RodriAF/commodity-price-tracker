@@ -279,6 +279,17 @@ python automation/flow.py
 The pipeline will run on startup and then on schedule (configurable cron or interval in `flow.py`). The FastAPI backend is available at `http://localhost:8000/api`. The React frontend at `http://localhost:5173`.
 
 
+### Tests
+
+```bash
+pip install -r requirements.txt
+
+pytest -m "not slow"   # ~5 s: calculations, pipeline, storage, validation
+pytest                 # full suite, ~40 s (also fits the forecasting models and exercises the API)
+```
+
+The tests use synthetic data and a temporary DuckDB file: no FRED API key, network access or running services are needed.
+
 ---
 
 ## Design Decisions
